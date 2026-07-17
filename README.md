@@ -51,3 +51,11 @@ EMAIL_HOST_PASSWORD=your16charapppassword
 KINDLE_ADDRESS=your_kindle_address@kindle.com
 MAX_ATTACHMENT_MB=18
 ```
+
+### 4. Running
+
+Run in terminal:
+
+```
+uv run uvicorn app.main:app --reload
+```
