@@ -1,28 +1,28 @@
 [project]
 name = "send-to-kindle"
 version = "0.1.0"
-description = "FastAPI app konwertujaca pliki i artykuly, i wysylajaca je na Send-to-Kindle przez Gmaila"
+description = "FastAPI app that converts files and articles and sends them to Send-to-Kindle via Gmail"
 readme = "README.md"
 requires-python = ">=3.12"
 
 dependencies = [
-    # rdzeń
+    # core
     "fastapi",
     "uvicorn[standard]",
     "jinja2",
-    "python-multipart",              # bez tego uploady nie działają
+    "python-multipart",              # required for uploads to work
     "pydantic-settings",
     "itsdangerous",                  # SessionMiddleware
 
     # mail
     "aiosmtplib",
 
-    # baza / stan jobów
+    # database / job state
     "sqlmodel",
     "aiosqlite",
-    "greenlet",                      # wymagane przez SQLAlchemy async
+    "greenlet",                      # required by SQLAlchemy async
 
-    # pliki, konwersja, ekstrakcja
+    # files, conversion, extraction
     "ebooklib",
     "trafilatura",
     "pymupdf",
@@ -31,13 +31,13 @@ dependencies = [
     "httpx",
     "python-slugify",
 
-    # higiena
+    # hygiene
     "structlog",
     "slowapi",
 ]
 
 [project.optional-dependencies]
-# uv sync --extra oauth  -> tylko gdyby ktoś inny miał logować się swoim Gmailem
+# uv sync --extra oauth  -> only if someone else needs to log in with their own Gmail
 oauth = [
     "google-auth",
     "google-auth-oauthlib",
@@ -53,9 +53,6 @@ dev = [
     "aiosmtpd",                      
     "types-python-slugify",
 ]
-
-[project.scripts]
-stk = "app.cli:main"
 
 [build-system]
 requires = ["hatchling"]

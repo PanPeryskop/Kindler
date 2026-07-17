@@ -6,8 +6,11 @@ import uuid
 import subprocess
 import shutil
 
+CONVERSION_TIMEOUT_SECONDS = 300
+
+
 class CalibreConverter:
-    
+
     @staticmethod
     def _run_calibre(input_path: str, output_path: str) -> subprocess.CompletedProcess:
         calibre_path = shutil.which("ebook-convert")
@@ -17,10 +20,11 @@ class CalibreConverter:
                 calibre_path = str(fallback)
             else:
                 raise FileNotFoundError()
-            
+
         return subprocess.run(
             [calibre_path, input_path, output_path],
-            capture_output=True
+            capture_output=True,
+            timeout=CONVERSION_TIMEOUT_SECONDS,
         )
 
     @staticmethod
@@ -43,5 +47,8 @@ class CalibreConverter:
                 
         except FileNotFoundError:
             return None, "Command 'ebook-convert' not found. Ensure Calibre is installed and added to the PATH environment variable."
+        except subprocess.TimeoutExpired:
+            output_path.unlink(missing_ok=True)
+            return None, f"Calibre conversion timed out after {CONVERSION_TIMEOUT_SECONDS}s."
         except Exception as e:
             return None, f"Exception: {type(e).__name__} - {e}"

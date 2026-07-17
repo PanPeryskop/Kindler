@@ -6,7 +6,7 @@ Upload a file (or paste a URL), Kindler converts it if needed and emails it to y
 
 ## Features
 
-- Upload PDF, EPUB, DOCX, HTML, TXT, or images — sent as-is to Kindle
+- Upload PDF, EPUB, DOCX, HTML, TXT, or images - sent as-is to Kindle
 - Paste an article URL - extracted and converted to a clean EPUB
 - Automatic conversion for legacy formats (MOBI, AZW3, FB2) via Calibre
 - Background job status (pending → converting → sending → sent)

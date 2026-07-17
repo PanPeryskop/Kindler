@@ -3,29 +3,11 @@ from email.message import EmailMessage
 from pathlib import Path
 
 import aiosmtplib
-import ebooklib
-from ebooklib import epub
 from slugify import slugify
 
 from app.config import settings
+from app.services.metadata import extract_epub_metadata
 
-def extract_epub_metadata(epub_path: Path) -> tuple[str, str, str]:
-    try:
-        book = epub.read_epub(str(epub_path))
-        titles = book.get_metadata("DC", "title")
-        authors = book.get_metadata("DC", "creator")
-        
-        title = titles[0][0] if titles else "Unknown Title"
-        author = authors[0][0] if authors else "Unknown Author"
-        
-        clean_title = slugify(title, separator="_")
-        clean_author = slugify(author, separator="_")
-        new_filename = f"{clean_author}-{clean_title}.epub"
-        
-        return new_filename, title, author
-    except Exception:
-        fallback_name = f"{slugify(epub_path.stem)}.epub"
-        return fallback_name, epub_path.stem, "Unknown Author"
 
 async def send_to_kindle(path: Path, kindle_address: str | None = None, *, convert: bool = False) -> None:
     if path.stat().st_size > settings.max_attachment_bytes:

@@ -83,22 +83,35 @@ async def upload(
     html_parts = []
     
     for file in files:
-        content = await file.read()
         filename = file.filename or ""
         job = job_queue.add(filename)
-        if len(content) > settings.max_attachment_bytes:
-            job_queue.update(job.id, "failed", f"File exceeds {settings.max_attachment_mb}MB limit")
-        
-        else:
-            tmp_path = Path(tempfile.gettempdir()) / f"{uuid.uuid4().hex}_{file.filename}"
-            tmp_path.write_bytes(content)
 
+        # Strip any directory components from the client-supplied name so it
+        # can't escape the temp dir, then stream to disk with a size guard so a
+        # huge upload can't be buffered fully into memory first.
+        safe_name = Path(filename).name
+        tmp_path = Path(tempfile.gettempdir()) / f"{uuid.uuid4().hex}_{safe_name}"
+
+        limit = settings.max_attachment_bytes
+        size = 0
+        too_large = False
+        with tmp_path.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > limit:
+                    too_large = True
+                    break
+                out.write(chunk)
+
+        if too_large:
+            tmp_path.unlink(missing_ok=True)
+            job_queue.update(job.id, "failed", f"File exceeds {settings.max_attachment_mb}MB limit")
+        else:
             background_tasks.add_task(
                 process_file_job, job.id, tmp_path, kindle_address
             )
-        
 
-    
+
         html_parts.append(
             templates.get_template("partials/job_card.html").render({
                 "request": request,

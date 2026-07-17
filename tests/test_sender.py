@@ -1,11 +1,8 @@
 import os
-import sys
 from pathlib import Path
 
 import pytest
 from aiosmtpd.controller import Controller
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 class SinkHandler:
@@ -37,10 +34,7 @@ def smtp_sink(monkeypatch, unused_tcp_port):
 
 @pytest.mark.asyncio
 async def test_send_to_kindle(tmp_path: Path, smtp_sink):
-    try:
-        from app.services.sender import send_to_kindle
-    except ModuleNotFoundError:
-        from app.services.sender import send_to_kindle
+    from app.services.sender import send_to_kindle
 
     f = tmp_path / "test book.epub"
     f.write_bytes(b"fake epub content")
