@@ -9,7 +9,14 @@ from app.config import settings
 from app.services.metadata import extract_epub_metadata
 
 
-async def send_to_kindle(path: Path, kindle_address: str | None = None, *, convert: bool = False) -> None:
+async def send_to_kindle(
+    path: Path,
+    kindle_address: str | None = None,
+    *,
+    convert: bool = False,
+    title: str | None = None,
+    author: str | None = None,
+) -> None:
     if path.stat().st_size > settings.max_attachment_bytes:
         raise ValueError(
             f"File size is {path.stat().st_size / 1_048_576:.1f} MB, "
@@ -19,10 +26,16 @@ async def send_to_kindle(path: Path, kindle_address: str | None = None, *, conve
     attachment_name = path.name
     email_body = ""
     email_subject = "convert" if convert else ""
-    
+
     if path.suffix.lower() == ".epub":
-        new_name, title, author = extract_epub_metadata(path)
-        attachment_name = new_name
+        extracted_name, extracted_title, extracted_author = extract_epub_metadata(path)
+        if title or author:
+            title = title or extracted_title
+            author = author or extracted_author
+            attachment_name = f"{slugify(author, separator='_')}-{slugify(title, separator='_')}.epub"
+        else:
+            title, author = extracted_title, extracted_author
+            attachment_name = extracted_name
         email_subject = email_subject or f"{author} - {title}"
         email_body = f"Title: {title}\nAuthor: {author}"
     else:

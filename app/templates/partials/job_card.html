@@ -1,17 +1,38 @@
 {% set status_map = {
 'pending': {'label': 'Queued', 'class': 'status--pending', 'progress': '8', 'active': true},
-'detecting': {'label': 'Detecting', 'class': 'status--processing', 'progress': '20', 'active': true},
-'extracting_url': {'label': 'Extracting', 'class': 'status--processing', 'progress': '30', 'active': true},
+'processing': {'label': 'Detecting', 'class': 'status--processing', 'progress': '20', 'active': true},
 'converting': {'label': 'Converting', 'class': 'status--processing', 'progress': '50', 'active': true},
-'fixing_metadata': {'label': 'Metadata', 'class': 'status--processing', 'progress': '70', 'active': true},
-'sending': {'label': 'Sending', 'class': 'status--processing', 'progress': '90', 'active': true},
+'sending': {'label': 'Sending', 'class': 'status--processing', 'progress': '80', 'active': true},
+'confirming': {'label': 'Confirming', 'class': 'status--processing', 'progress': '95', 'active': true},
 'success': {'label': 'Delivered', 'class': 'status--success', 'progress': '100', 'active': false},
+'unconfirmed': {'label': 'Sent (unconfirmed)', 'class': 'status--warn', 'progress': '100', 'active': false},
 'failed': {'label': 'Failed', 'class': 'status--failed', 'progress': '100', 'active': false},
 } %}
 
+{% if status == 'review' %}
+<form id="job-{{ job_id }}" class="job-card job-card--review" hx-post="/jobs/{{ job_id }}/send"
+  hx-target="#job-{{ job_id }}" hx-swap="outerHTML">
+  <div class="job-card__header">
+    <span class="job-card__name" title="{{ filename }}">{{ filename }}</span>
+    <span class="job-card__status status--review">Review</span>
+  </div>
+  <div class="review">
+    {% if cover %}<img class="review__cover" src="{{ cover }}" alt="">{% endif %}
+    <div class="review__fields">
+      <label class="field__label" for="title-{{ job_id }}">Title</label>
+      <input class="field__input" id="title-{{ job_id }}" name="title" value="{{ title or '' }}">
+      <label class="field__label" for="author-{{ job_id }}">Author</label>
+      <input class="field__input" id="author-{{ job_id }}" name="author" value="{{ author or '' }}">
+    </div>
+  </div>
+  <button type="submit" class="btn">
+    <span class="btn__label">Send to Kindle</span>
+    <i data-lucide="arrow-right" style="width:16px;height:16px;"></i>
+  </button>
+</form>
+{% else %}
 {% set info = status_map.get(status, status_map['pending']) %}
-{% set is_done = status in ('success', 'failed') %}
-
+{% set is_done = status in ('success', 'failed', 'unconfirmed') %}
 <div id="job-{{ job_id }}" class="job-card" {% if not is_done %} hx-get="/jobs/{{ job_id }}" hx-trigger="every 2s"
   hx-swap="outerHTML" {% endif %}>
   <div class="job-card__header">
@@ -31,3 +52,4 @@
   <div class="job-card__error">{{ error }}</div>
   {% endif %}
 </div>
+{% endif %}

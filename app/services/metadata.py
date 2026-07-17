@@ -25,3 +25,10 @@ def extract_epub_metadata(epub_path: Path) -> tuple[str, str, str]:
     except Exception:
         fallback_name = f"{slugify(epub_path.stem)}.epub"
         return fallback_name, epub_path.stem, "Unknown Author"
+
+
+def probe_metadata(path: Path, file_type: str) -> tuple[str, str]:
+    if file_type == "epub":
+        _, title, author = extract_epub_metadata(path)
+        return title, author
+    return path.stem, ""

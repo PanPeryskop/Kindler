@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     email_host_user: str
     email_host_password: str
 
+    imap_host: str = "imap.gmail.com"
+    imap_port: int = 993
+
     test_email: str | None = None
     kindle_address: str
     max_attachment_mb: int = 18

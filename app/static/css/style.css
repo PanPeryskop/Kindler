@@ -757,6 +757,42 @@ h3 {
   color: var(--hot);
 }
 
+.status--review {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.status--warn {
+  background: var(--surface-alt);
+  color: var(--ink-muted);
+}
+
+.review {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.review__cover {
+  width: 72px;
+  height: auto;
+  align-self: flex-start;
+  border: var(--border-thin);
+  flex-shrink: 0;
+}
+
+.review__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.job-card--review .btn {
+  margin-top: 0.75rem;
+}
+
 
 .progress {
   height: 8px;
