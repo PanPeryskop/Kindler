@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Send to Kindle</title>
+  <meta name="description"
+    content="Self-hosted file and article converter for Kindle devices. Upload files or paste URLs to send directly to your reader.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📚</text></svg>">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
+
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+
+  <script src="https://unpkg.com/lucide@latest" defer></script>
+
+  <link rel="stylesheet" href="/static/css/style.css?v=1.1">
+  
+  <script>
+    const savedTheme = localStorage.getItem('theme') || 
+      (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  </script>
+</head>
+
+<body>
+
+  <div class="shell">
+    <div class="main-container">
+
+      <header class="site-header">
+        <div class="site-header__brand">
+          <div class="site-header__logo">
+            <i data-lucide="book-open" style="width:20px;height:20px;"></i>
+          </div>
+          <h1 class="site-header__title">Send to Kindle</h1>
+        </div>
+        <div style="display: flex; align-items: center; gap: 1rem;">
+          <button class="theme-toggle" id="theme-toggle" aria-label="Toggle dark mode">
+            <i data-lucide="moon" style="width:20px;height:20px;" id="theme-icon"></i>
+          </button>
+          <span class="site-header__badge">Self-Hosted</span>
+        </div>
+      </header>
+
+
+      <div class="notice" role="alert">
+        <div class="notice__icon">
+          <i data-lucide="triangle-alert" style="width:20px;height:20px;"></i>
+        </div>
+        <div class="notice__content">
+          <strong>Sender whitelist required</strong>
+          Your sending address must be on Amazon's
+          <a href="https://www.amazon.com/hz/mycd/myx#/home/settings/payment" target="_blank" rel="noopener"
+            class="notice__link">
+            Approved Personal Document E-mail List
+          </a>
+          — otherwise files are silently dropped with no error.
+          Delivery typically takes 1-5 minutes. There is no delivery confirmation.
+        </div>
+      </div>
+
+
+      <div class="config-section">
+        <div class="field">
+          <label class="field__label" for="kindle-addr">
+            <i data-lucide="at-sign" style="width:12px;height:12px;"></i>
+            Kindle delivery address
+          </label>
+          <input type="email" class="field__input" id="kindle-addr" value="{{ default_kindle }}"
+            placeholder="you_123@kindle.com" required>
+          <span class="field__hint">Found in Amazon &gt; Manage Your Content and Devices &gt; Preferences</span>
+        </div>
+      </div>
+
+
+      <div class="main-panel">
+        <form id="file-form" hx-post="/upload" hx-encoding="multipart/form-data" hx-target="#jobs-list"
+          hx-swap="afterbegin" hx-indicator="#file-form">
+          <input type="hidden" name="kindle_address" id="file-kindle-target">
+
+          <div class="dropzone" id="dropzone">
+            <input type="file" name="files" id="file-input" required multiple
+              accept=".epub,.pdf,.mobi,.azw,.azw3,.txt,.rtf,.doc,.docx,.htm,.html,.png,.jpg,.jpeg,.gif,.bmp,.fb2">
+            <button type="button" class="dropzone__reset" id="dropzone-reset" aria-label="Clear files" onclick="resetDropzone(event)">
+              <i data-lucide="x" style="width: 16px; height: 16px;"></i>
+            </button>
+            <div class="dropzone__icon">
+              <i data-lucide="hard-drive-upload" style="width:44px;height:44px;"></i>
+            </div>
+            <div class="dropzone__text" id="dropzone-default-text">
+              Drop your files here or <strong>click to browse</strong>
+            </div>
+            <div class="dropzone__formats">
+              epub / pdf / mobi / docx / txt / html — max {{ max_size }}mb
+            </div>
+            <div class="dropzone__filename" id="dropzone-filename"></div>
+          </div>
+
+          <button type="submit" class="btn" id="btn-file" onclick="syncKindle('file-kindle-target')">
+            <span class="btn__label">Send to Kindle</span>
+            <i data-lucide="arrow-right" style="width:16px;height:16px;"></i>
+            <span class="htmx-indicator"><span class="spinner"></span></span>
+          </button>
+        </form>
+      </div>
+
+
+      <section class="jobs-section" id="jobs-section">
+        <div class="jobs-section__header">
+          <i data-lucide="layers" style="width:14px;height:14px;color:var(--ink-muted);"></i>
+          <span class="jobs-section__title">Queue</span>
+          <span class="jobs-section__count" id="jobs-count">0</span>
+        </div>
+        <div class="jobs-list" id="jobs-list">
+        </div>
+      </section>
+
+
+      <footer class="site-footer">
+        <p class="site-footer__text">
+          SMTP Path A &middot; Single-user &middot; Files are deleted after sending
+        </p>
+      </footer>
+
+    </div>
+  </div>
+
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      if (window.lucide) lucide.createIcons();
+      
+      const themeToggle = document.getElementById('theme-toggle');
+      const themeIcon = document.getElementById('theme-icon');
+      
+      function updateIcon(theme) {
+        themeIcon.setAttribute('data-lucide', theme === 'dark' ? 'sun' : 'moon');
+        if (window.lucide) lucide.createIcons();
+      }
+
+      updateIcon(document.documentElement.getAttribute('data-theme'));
+
+      themeToggle.addEventListener('click', () => {
+        const currentTheme = document.documentElement.getAttribute('data-theme');
+        const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        
+        document.documentElement.setAttribute('data-theme', newTheme);
+        localStorage.setItem('theme', newTheme);
+        updateIcon(newTheme);
+      });
+    });
+
+    document.body.addEventListener('htmx:afterSwap', () => {
+      if (window.lucide) lucide.createIcons();
+      updateJobCount();
+    });
+
+    function syncKindle(targetId) {
+      const addr = document.getElementById('kindle-addr').value;
+      document.getElementById(targetId).value = addr;
+    }
+
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('file-input');
+    const defaultText = document.getElementById('dropzone-default-text');
+    const filenameDisplay = document.getElementById('dropzone-filename');
+    const formatsDisplay = dropzone.querySelector('.dropzone__formats');
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files && fileInput.files.length > 0) {
+        const count = fileInput.files.length;
+        const names = Array.from(fileInput.files).map(f => f.name);
+        dropzone.classList.add('has-file');
+        filenameDisplay.textContent = names.join(', ');
+        defaultText.innerHTML = count === 1 ? 'Selected file:' : `Selected ${count} files:`;
+        formatsDisplay.style.display = 'none';
+      }
+    });
+
+    ['dragenter', 'dragover'].forEach(evt => {
+      dropzone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.classList.add('dragover');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach(evt => {
+      dropzone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.classList.remove('dragover');
+        
+        if (evt === 'drop' && e.dataTransfer && e.dataTransfer.files.length > 0) {
+          fileInput.files = e.dataTransfer.files;
+          fileInput.dispatchEvent(new Event('change'));
+        }
+      });
+    });
+
+    document.body.addEventListener('htmx:afterRequest', (evt) => {
+      const form = evt.detail.elt;
+      if (form.id === 'file-form' && evt.detail.successful) {
+        resetDropzone();
+        form.reset();
+      }
+    });
+
+    function resetDropzone(e) {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      document.getElementById('file-form').reset();
+      dropzone.classList.remove('has-file');
+      filenameDisplay.textContent = '';
+      defaultText.innerHTML = 'Drop your files here or <strong>click to browse</strong>';
+      if (formatsDisplay) formatsDisplay.style.display = '';
+    }
+
+    function updateJobCount() {
+      const count = document.querySelectorAll('#jobs-list .job-card').length;
+      const counter = document.getElementById('jobs-count');
+      if (counter) counter.textContent = count;
+    }
+
+    document.addEventListener('DOMContentLoaded', updateJobCount);
+  </script>
+
+</body>
+
+</html>

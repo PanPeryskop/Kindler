@@ -1,0 +1,33 @@
+{% set status_map = {
+'pending': {'label': 'Queued', 'class': 'status--pending', 'progress': '8', 'active': true},
+'detecting': {'label': 'Detecting', 'class': 'status--processing', 'progress': '20', 'active': true},
+'extracting_url': {'label': 'Extracting', 'class': 'status--processing', 'progress': '30', 'active': true},
+'converting': {'label': 'Converting', 'class': 'status--processing', 'progress': '50', 'active': true},
+'fixing_metadata': {'label': 'Metadata', 'class': 'status--processing', 'progress': '70', 'active': true},
+'sending': {'label': 'Sending', 'class': 'status--processing', 'progress': '90', 'active': true},
+'success': {'label': 'Delivered', 'class': 'status--success', 'progress': '100', 'active': false},
+'failed': {'label': 'Failed', 'class': 'status--failed', 'progress': '100', 'active': false},
+} %}
+
+{% set info = status_map.get(status, status_map['pending']) %}
+{% set is_done = status in ('success', 'failed') %}
+
+<div id="job-{{ job_id }}" class="job-card" {% if not is_done %} hx-get="/jobs/{{ job_id }}" hx-trigger="every 2s"
+  hx-swap="outerHTML" {% endif %}>
+  <div class="job-card__header">
+    <span class="job-card__name" title="{{ filename }}">{{ filename }}</span>
+    <span class="job-card__status {{ info.class }}">{{ info.label }}</span>
+  </div>
+
+  <div class="progress">
+    <div class="progress__fill
+        {% if status == 'success' %} progress__fill--success
+        {% elif status == 'failed' %} progress__fill--failed
+        {% elif info.active %} progress__fill--active
+        {% endif %}" style="width: {{ info.progress }}%"></div>
+  </div>
+
+  {% if error %}
+  <div class="job-card__error">{{ error }}</div>
+  {% endif %}
+</div>
