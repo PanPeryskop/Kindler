@@ -1,42 +1,47 @@
-from dataclasses import dataclass
-from pathlib import Path
-import threading
 import uuid
+from datetime import timedelta
 
+from sqlmodel import select
 
-@dataclass
-class Job:
-    id: str
-    filename: str
-    status: str = "pending"
-    error: str | None = None
-    kindle_address: str | None = None
-    tmp_path: Path | None = None
-    title: str | None = None
-    author: str | None = None
-    cover: str | None = None
+from app.db import Job, session_factory, utcnow
+
+ACTIVE_STATUSES = ("pending", "processing", "converting", "sending", "checking")
 
 
 class JobQueue:
-    def __init__(self):
-        self.jobs: dict[str, Job] = {}
-        self.lock = threading.Lock()
-
-    def add(self, filename: str, **fields) -> Job:
+    async def add(self, filename: str, **fields) -> Job:
         job = Job(id=uuid.uuid4().hex[:12], filename=filename, **fields)
-        with self.lock:
-            self.jobs[job.id] = job
-            return job
+        async with session_factory() as session:
+            session.add(job)
+            await session.commit()
+        return job
 
-    def get(self, job_id: str) -> Job | None:
-        with self.lock:
-            return self.jobs.get(job_id)
+    async def get(self, job_id: str) -> Job | None:
+        async with session_factory() as session:
+            return await session.get(Job, job_id)
 
-    def set(self, job_id: str, **fields) -> None:
-        with self.lock:
-            if job := self.jobs.get(job_id):
-                for key, value in fields.items():
-                    setattr(job, key, value)
+    async def set(self, job_id: str, **fields) -> None:
+        async with session_factory() as session:
+            job = await session.get(Job, job_id)
+            if not job:
+                return
+            for key, value in fields.items():
+                setattr(job, key, value)
+            session.add(job)
+            await session.commit()
 
-    def update(self, job_id: str, status: str, error: str | None = None) -> None:
-        self.set(job_id, status=status, error=error)
+    async def update(self, job_id: str, status: str, error: str | None = None) -> None:
+        await self.set(job_id, status=status, error=error)
+
+    async def with_status(self, *statuses: str) -> list[Job]:
+        async with session_factory() as session:
+            result = await session.exec(select(Job).where(Job.status.in_(statuses)))
+            return list(result)
+
+    async def older_than(self, status: str, age: timedelta) -> list[Job]:
+        cutoff = utcnow() - age
+        async with session_factory() as session:
+            result = await session.exec(
+                select(Job).where(Job.status == status, Job.created_at < cutoff)
+            )
+            return list(result)

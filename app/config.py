@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     test_email: str | None = None
     kindle_address: str
     max_attachment_mb: int = 18
+    db_path: str = "kindler.db"
 
     @property
     def max_attachment_bytes(self) -> int:
