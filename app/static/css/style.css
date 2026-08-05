@@ -762,11 +762,6 @@ h3 {
   color: var(--accent);
 }
 
-.status--warn {
-  background: var(--surface-alt);
-  color: var(--ink-muted);
-}
-
 .review {
   display: flex;
   gap: 0.75rem;

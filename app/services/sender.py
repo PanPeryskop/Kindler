@@ -23,6 +23,9 @@ async def send_to_kindle(
             f"limit is {settings.max_attachment_mb} MB."
         )
 
+    title = title or ""
+    author = author or ""
+
     attachment_name = path.name
     email_body = ""
     email_subject = "convert" if convert else ""
@@ -32,14 +35,23 @@ async def send_to_kindle(
         if title or author:
             title = title or extracted_title
             author = author or extracted_author
-            attachment_name = f"{slugify(author, separator='_')}-{slugify(title, separator='_')}.epub"
+            clean = f"{slugify(author, separator='_')}-{slugify(title, separator='_')}"
+            attachment_name = f"{clean}.epub"
         else:
             title, author = extracted_title, extracted_author
             attachment_name = extracted_name
         email_subject = email_subject or f"{author} - {title}"
         email_body = f"Title: {title}\nAuthor: {author}"
     else:
-        attachment_name = f"{slugify(path.stem)}{path.suffix}"
+        if title and author:
+            stem = f"{slugify(author, separator='_')}-{slugify(title, separator='_')}"
+        elif title:
+            stem = slugify(title, separator="_")
+        else:
+            stem = slugify(path.stem)
+        attachment_name = f"{stem}{path.suffix}"
+        if title or author:
+            email_body = f"Title: {title or 'Unknown Title'}\nAuthor: {author or 'Unknown Author'}"
 
     msg = EmailMessage()
     msg["From"] = settings.email_host_user or "noreply@example.com"

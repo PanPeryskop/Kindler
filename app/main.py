@@ -1,5 +1,6 @@
+import asyncio
 import tempfile
-import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, Request, UploadFile
@@ -9,11 +10,11 @@ from fastapi.templating import Jinja2Templates
 
 from app.config import settings
 from app.queue import Job, JobQueue
-from app.services.confirm import confirm_delivery
+from app.services.confirm import watch_for_problem
 from app.services.convert import CalibreConverter
 from app.services.covers import extract_cover
 from app.services.detect import FileTypeDetector
-from app.services.metadata import probe_metadata
+from app.services.metadata import apply_metadata, probe_metadata
 from app.services.sender import send_to_kindle
 
 job_queue = JobQueue()
@@ -52,38 +53,39 @@ async def process_file_job(job_id: str) -> None:
             job_queue.update(job_id, "failed", f"Invalid file type: {file_type}")
             return
 
+        converted_path = None
         if file_type in ["epub", "pdf"]:
-            job_queue.update(job_id, "sending")
-            await send_to_kindle(
-                tmp_path,
-                job.kindle_address,
-                convert=(file_type == "pdf"),
-                title=job.title,
-                author=job.author,
-            )
+            outgoing, outgoing_type = tmp_path, file_type
         else:
             job_queue.update(job_id, "converting")
             converted_path, error = await CalibreConverter.convert_to_epub(tmp_path)
             if error or not converted_path:
                 job_queue.update(job_id, "failed", f"Calibre conversion error: {error}")
                 return
-            job_queue.update(job_id, "sending")
-            await send_to_kindle(
-                converted_path,
-                job.kindle_address,
-                title=job.title,
-                author=job.author,
-            )
+            outgoing, outgoing_type = converted_path, "epub"
+
+        await asyncio.to_thread(
+            apply_metadata, outgoing, outgoing_type, job.title or "", job.author or ""
+        )
+
+        sent_at = datetime.now(UTC)
+        job_queue.update(job_id, "sending")
+        await send_to_kindle(
+            outgoing,
+            job.kindle_address,
+            convert=(outgoing_type == "pdf"),
+            title=job.title,
+            author=job.author,
+        )
+        if converted_path:
             converted_path.unlink(missing_ok=True)
 
-        job_queue.update(job_id, "confirming")
-        result = await confirm_delivery(job.title)
-        if result is True:
-            job_queue.update(job_id, "success")
-        elif result is False:
-            job_queue.update(job_id, "failed", "Amazon reported a delivery problem.")
+        job_queue.update(job_id, "checking")
+        problem = await watch_for_problem(sent_at)
+        if problem:
+            job_queue.update(job_id, "failed", f"Amazon: {problem}")
         else:
-            job_queue.update(job_id, "unconfirmed")
+            job_queue.update(job_id, "sent")
 
     except Exception as e:
         job_queue.update(job_id, "failed", str(e))

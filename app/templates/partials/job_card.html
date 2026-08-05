@@ -3,9 +3,8 @@
 'processing': {'label': 'Detecting', 'class': 'status--processing', 'progress': '20', 'active': true},
 'converting': {'label': 'Converting', 'class': 'status--processing', 'progress': '50', 'active': true},
 'sending': {'label': 'Sending', 'class': 'status--processing', 'progress': '80', 'active': true},
-'confirming': {'label': 'Confirming', 'class': 'status--processing', 'progress': '95', 'active': true},
-'success': {'label': 'Delivered', 'class': 'status--success', 'progress': '100', 'active': false},
-'unconfirmed': {'label': 'Sent (unconfirmed)', 'class': 'status--warn', 'progress': '100', 'active': false},
+'checking': {'label': 'Checking', 'class': 'status--processing', 'progress': '95', 'active': true},
+'sent': {'label': 'Sent', 'class': 'status--success', 'progress': '100', 'active': false},
 'failed': {'label': 'Failed', 'class': 'status--failed', 'progress': '100', 'active': false},
 } %}
 
@@ -32,7 +31,7 @@
 </form>
 {% else %}
 {% set info = status_map.get(status, status_map['pending']) %}
-{% set is_done = status in ('success', 'failed', 'unconfirmed') %}
+{% set is_done = status in ('sent', 'failed') %}
 <div id="job-{{ job_id }}" class="job-card" {% if not is_done %} hx-get="/jobs/{{ job_id }}" hx-trigger="every 2s"
   hx-swap="outerHTML" {% endif %}>
   <div class="job-card__header">
@@ -42,7 +41,7 @@
 
   <div class="progress">
     <div class="progress__fill
-        {% if status == 'success' %} progress__fill--success
+        {% if status == 'sent' %} progress__fill--success
         {% elif status == 'failed' %} progress__fill--failed
         {% elif info.active %} progress__fill--active
         {% endif %}" style="width: {{ info.progress }}%"></div>
