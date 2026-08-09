@@ -1,0 +1,34 @@
+{% set source_labels = {'wolnelektury': 'Wolne Lektury', 'gutenberg': 'Gutenberg'} %}
+
+{% if error %}
+<div class="job-card__error">{{ error }}</div>
+{% elif query and not results %}
+<div class="search-empty">Nothing found for &ldquo;{{ query }}&rdquo;.</div>
+{% else %}
+{% for result in results %}
+<div class="search-result">
+  {% if result.cover_url %}
+  <img class="search-result__cover" src="{{ result.cover_url }}" alt="" loading="lazy">
+  {% else %}
+  <div class="search-result__cover search-result__cover--empty"></div>
+  {% endif %}
+
+  <div class="search-result__body">
+    <div class="search-result__title">{{ result.title }}</div>
+    <div class="search-result__author">{{ result.author }}</div>
+    <span class="search-result__source">{{ source_labels.get(result.source, result.source) }}</span>
+
+    <form class="search-result__formats" hx-post="/library/download" hx-target="#jobs-list"
+      hx-swap="afterbegin" hx-indicator="closest .search-result"
+      hx-vals='js:{kindle_address: document.getElementById("kindle-addr").value}'>
+      <input type="hidden" name="source" value="{{ result.source }}">
+      <input type="hidden" name="ref" value="{{ result.ref }}">
+      {% for name in result.formats %}
+      <button type="submit" class="format-btn" name="book_format" value="{{ name }}">{{ name }}</button>
+      {% endfor %}
+      <span class="htmx-indicator"><span class="spinner"></span></span>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endif %}

@@ -80,6 +80,25 @@
 
 
       <div class="main-panel">
+        <form id="search-form" hx-get="/search" hx-target="#search-results" hx-swap="innerHTML"
+          hx-indicator="#search-form">
+          <div class="search-bar">
+            <input type="search" class="field__input" name="q" id="search-input"
+              placeholder="Search Wolne Lektury and Project Gutenberg&hellip;" autocomplete="off">
+            <button type="submit" class="btn btn--compact">
+              <span class="btn__label">Search</span>
+              <i data-lucide="search" style="width:16px;height:16px;"></i>
+              <span class="htmx-indicator"><span class="spinner"></span></span>
+            </button>
+          </div>
+          <span class="field__hint">Public domain catalogues &mdash; any format, converted if needed</span>
+        </form>
+
+        <div class="search-results" id="search-results"></div>
+      </div>
+
+
+      <div class="main-panel">
         <form id="file-form" hx-post="/upload" hx-encoding="multipart/form-data" hx-target="#jobs-list"
           hx-swap="afterbegin" hx-indicator="#file-form">
           <input type="hidden" name="kindle_address" id="file-kindle-target">

@@ -55,6 +55,22 @@ def test_probe_falls_back_to_stem(tmp_path: Path):
     assert probe_metadata(f, "pdf") == ("some_scan", "")
 
 
+def test_probe_prefers_explicit_fallback_over_temp_stem(tmp_path: Path):
+    f = tmp_path / "9037356be3ed_quo-vadis.txt"
+    f.write_bytes(b"plain text")
+
+    title, _ = probe_metadata(f, "txt", fallback_title="Quo vadis")
+
+    assert title == "Quo vadis"
+
+
+def test_embedded_metadata_still_wins_over_fallback(tmp_path: Path):
+    f = tmp_path / "abc123_book.epub"
+    make_epub(f, "Real Title", "Real Author")
+
+    assert probe_metadata(f, "epub", fallback_title="Ignored") == ("Real Title", "Real Author")
+
+
 def test_edit_overwrites_epub_without_duplicating_entries(tmp_path: Path):
     f = tmp_path / "b.epub"
     make_epub(f, "Original Title", "Original Author")

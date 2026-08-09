@@ -45,9 +45,9 @@ def read_raw_metadata(path: Path, file_type: str) -> tuple[str, str]:
     return "", ""
 
 
-def probe_metadata(path: Path, file_type: str) -> tuple[str, str]:
+def probe_metadata(path: Path, file_type: str, fallback_title: str = "") -> tuple[str, str]:
     title, author = read_raw_metadata(path, file_type)
-    return title or path.stem, author
+    return title or fallback_title or path.stem, author
 
 
 def _write_epub_metadata(path: Path, title: str, author: str) -> None:

@@ -8,10 +8,12 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from slugify import slugify
 
 from app.config import settings
 from app.db import Job, init_db
 from app.queue import ACTIVE_STATUSES, JobQueue
+from app.services import library
 from app.services.confirm import watch_for_problem
 from app.services.convert import CalibreConverter
 from app.services.covers import extract_cover
@@ -146,6 +148,58 @@ async def index(request: Request):
     )
 
 
+@app.get("/search", response_class=HTMLResponse)
+async def search_library(request: Request, q: str = ""):
+    try:
+        results = await library.search(q)
+        error = None
+    except Exception:
+        results, error = [], "Search is unavailable right now."
+
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/search_results.html",
+        context={"request": request, "results": results, "query": q.strip(), "error": error},
+    )
+
+
+@app.post("/library/download", response_class=HTMLResponse)
+async def download_from_library(
+    request: Request,
+    source: str = Form(...),
+    ref: str = Form(...),
+    book_format: str = Form(...),
+    kindle_address: str = Form(...),
+):
+    try:
+        url, title, catalogue_author = await library.resolve(source, ref, book_format)
+    except Exception as exc:
+        return HTMLResponse(f"<div class='job-card__error'>{exc}</div>")
+
+    filename = f"{slugify(title)}.{book_format}"
+    job = await job_queue.add(filename, status="review", kindle_address=kindle_address)
+    tmp_path = Path(tempfile.gettempdir()) / f"{job.id}_{filename}"
+
+    try:
+        await library.download(url, tmp_path)
+    except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
+        await job_queue.update(job.id, "failed", str(exc))
+        return render_job_card(request, await job_queue.get(job.id))
+
+    file_type, _ = FileTypeDetector.detect_file_type(tmp_path)
+    probed_title, author = probe_metadata(tmp_path, file_type, fallback_title=title)
+    cover = extract_cover(tmp_path, file_type)
+    await job_queue.set(
+        job.id,
+        tmp_path=str(tmp_path),
+        title=probed_title,
+        author=author or catalogue_author,
+        cover=cover,
+    )
+    return render_job_card(request, await job_queue.get(job.id))
+
+
 @app.post("/upload", response_class=HTMLResponse)
 async def upload(
     request: Request,
@@ -178,7 +232,9 @@ async def upload(
             )
         else:
             file_type, _ = FileTypeDetector.detect_file_type(tmp_path)
-            title, author = probe_metadata(tmp_path, file_type)
+            title, author = probe_metadata(
+                tmp_path, file_type, fallback_title=Path(safe_name).stem
+            )
             cover = extract_cover(tmp_path, file_type)
             await job_queue.set(
                 job.id, tmp_path=str(tmp_path), title=title, author=author, cover=cover

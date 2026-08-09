@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     kindle_address: str
     max_attachment_mb: int = 18
     db_path: str = "kindler.db"
+    search_limit: int = 10
+    catalog_ttl_minutes: int = 360
 
     @property
     def max_attachment_bytes(self) -> int:
