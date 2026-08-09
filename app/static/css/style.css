@@ -773,6 +773,14 @@ h3 {
   min-width: 0;
 }
 
+.search-bar .search-bar__lang {
+  flex: 0 0 auto;
+  width: 7.5rem;
+  padding-left: 0.75rem;
+  padding-right: 0.5rem;
+  cursor: pointer;
+}
+
 .btn--compact {
   width: auto;
   flex-shrink: 0;

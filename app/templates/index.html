@@ -84,14 +84,20 @@
           hx-indicator="#search-form">
           <div class="search-bar">
             <input type="search" class="field__input" name="q" id="search-input"
-              placeholder="Search Wolne Lektury and Project Gutenberg&hellip;" autocomplete="off">
+              placeholder="Search public domain catalogues&hellip;" autocomplete="off">
+            <select class="field__input search-bar__lang" name="lang" id="search-lang">
+              {% for code, label in languages.items() %}
+              <option value="{{ code }}">{{ label }}</option>
+              {% endfor %}
+            </select>
             <button type="submit" class="btn btn--compact">
               <span class="btn__label">Search</span>
               <i data-lucide="search" style="width:16px;height:16px;"></i>
               <span class="htmx-indicator"><span class="spinner"></span></span>
             </button>
           </div>
-          <span class="field__hint">Public domain catalogues &mdash; any format, converted if needed</span>
+          <span class="field__hint">Wolne Lektury &middot; Project Gutenberg &middot; Standard Ebooks
+            &mdash; any format, converted if needed</span>
         </form>
 
         <div class="search-results" id="search-results"></div>

@@ -144,14 +144,18 @@ async def index(request: Request):
             "request": request,
             "default_kindle": settings.kindle_address,
             "max_size": settings.max_attachment_mb,
+            "languages": library.LANGUAGES,
         },
     )
 
 
 @app.get("/search", response_class=HTMLResponse)
-async def search_library(request: Request, q: str = ""):
+async def search_library(request: Request, q: str = "", lang: str = ""):
+    if lang not in library.LANGUAGES:
+        lang = ""
+
     try:
-        results = await library.search(q)
+        results = await library.search(q, language=lang)
         error = None
     except Exception:
         results, error = [], "Search is unavailable right now."

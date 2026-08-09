@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,12 +14,35 @@ WOLNELEKTURY_CATALOG_URL = "https://wolnelektury.pl/api/books/"
 WOLNELEKTURY_BOOK_URL = "https://wolnelektury.pl/api/books/{slug}/"
 WOLNELEKTURY_MEDIA_URL = "https://wolnelektury.pl/media/"
 
+GITHUB_SEARCH_URL = "https://api.github.com/search/repositories"
+STANDARDEBOOKS_DOWNLOAD_URL = "https://standardebooks.org/ebooks/{path}/downloads/"
+STANDARDEBOOKS_DESCRIPTION_PREFIX = "Epub source for the Standard Ebooks edition of "
+STANDARDEBOOKS_NON_BOOK_REPOS = frozenset({"tools", "web", "manual"})
+STANDARDEBOOKS_SOURCE_PARAM = "?source=feed"
+
+REJECTED_CONTENT_TYPES = ("text/html", "application/xhtml+xml")
+
 ALLOWED_DOWNLOAD_HOSTS = frozenset({
     "wolnelektury.pl",
     "www.wolnelektury.pl",
     "gutenberg.org",
     "www.gutenberg.org",
+    "standardebooks.org",
+    "www.standardebooks.org",
 })
+
+LANGUAGES = {
+    "": "All",
+    "pl": "Polski",
+    "en": "English",
+    "de": "Deutsch",
+    "fr": "Français",
+    "es": "Español",
+    "it": "Italiano",
+    "ru": "Русский",
+}
+
+SOURCE_LANGUAGE = {"wolnelektury": "pl", "standardebooks": "en"}
 
 GUTENBERG_FORMATS = {
     "application/epub+zip": "epub",
@@ -31,6 +55,7 @@ WOLNELEKTURY_FORMATS = ("epub", "mobi", "pdf", "fb2", "html", "txt")
 
 HTTP_TIMEOUT = 20.0
 MAX_REDIRECTS = 5
+SAFE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 _catalog: list[dict] = []
 _catalog_fetched_at = 0.0
@@ -44,6 +69,7 @@ class SearchResult:
     author: str
     cover_url: str | None
     formats: dict[str, str]
+    language: str = ""
 
 
 def host_allowed(url: str) -> bool:
@@ -79,16 +105,72 @@ def _gutenberg_result(book: dict) -> SearchResult | None:
         author=authors or "Unknown Author",
         cover_url=book.get("formats", {}).get("image/jpeg"),
         formats=formats,
+        language=(book.get("languages") or [""])[0],
     )
 
 
 async def _search_gutenberg(
-    client: httpx.AsyncClient, query: str, limit: int
+    client: httpx.AsyncClient, query: str, limit: int, language: str = ""
 ) -> list[SearchResult]:
-    response = await client.get(GUTENDEX_URL, params={"search": query})
+    params = {"search": query}
+    if language:
+        params["languages"] = language
+    response = await client.get(GUTENDEX_URL, params=params)
     response.raise_for_status()
     books = response.json().get("results", [])[:limit]
     return [result for book in books if (result := _gutenberg_result(book))]
+
+
+def _standardebooks_title_author(description: str, parts: list[str]) -> tuple[str, str]:
+    text = description.removeprefix(STANDARDEBOOKS_DESCRIPTION_PREFIX)
+    title, _, author = text.partition(", by ")
+    author = author.split(" and translated by ")[0].strip()
+    if not title:
+        title = parts[1].replace("-", " ").title()
+    if not author:
+        author = parts[0].replace("-", " ").title()
+    return title.strip(), author
+
+
+def _standardebooks_formats(name: str, parts: list[str]) -> dict[str, str]:
+    base = STANDARDEBOOKS_DOWNLOAD_URL.format(path="/".join(parts))
+    suffix = STANDARDEBOOKS_SOURCE_PARAM
+    return {
+        "epub": f"{base}{name}.epub{suffix}",
+        "azw3": f"{base}{name}.azw3{suffix}",
+    }
+
+
+def _standardebooks_result(repo: dict) -> SearchResult | None:
+    name = repo.get("name", "")
+    parts = name.split("_")
+    if name in STANDARDEBOOKS_NON_BOOK_REPOS or len(parts) < 2:
+        return None
+
+    base = STANDARDEBOOKS_DOWNLOAD_URL.format(path="/".join(parts))
+    title, author = _standardebooks_title_author(repo.get("description") or "", parts)
+    return SearchResult(
+        source="standardebooks",
+        ref=name,
+        title=title,
+        author=author,
+        cover_url=f"{base}cover.jpg",
+        formats=_standardebooks_formats(name, parts),
+        language="en",
+    )
+
+
+async def _search_standardebooks(
+    client: httpx.AsyncClient, query: str, limit: int
+) -> list[SearchResult]:
+    response = await client.get(
+        GITHUB_SEARCH_URL,
+        params={"q": f"{query} org:standardebooks", "per_page": limit},
+        headers={"Accept": "application/vnd.github+json"},
+    )
+    response.raise_for_status()
+    repos = response.json().get("items", [])
+    return [result for repo in repos if (result := _standardebooks_result(repo))]
 
 
 async def _wolnelektury_catalog(client: httpx.AsyncClient) -> list[dict]:
@@ -127,6 +209,7 @@ async def _wolnelektury_detail(client: httpx.AsyncClient, book: dict) -> SearchR
         author=book.get("author") or "Unknown Author",
         cover_url=book.get("cover") or _absolute_media_url(data.get("cover_thumb")),
         formats=formats,
+        language="pl",
     )
 
 
@@ -147,18 +230,24 @@ async def _search_wolnelektury(
     return [item for item in details if isinstance(item, SearchResult)]
 
 
-async def search(query: str, limit: int | None = None) -> list[SearchResult]:
+def _source_matches_language(source: str, language: str) -> bool:
+    return not language or SOURCE_LANGUAGE.get(source) == language
+
+
+async def search(query: str, language: str = "", limit: int | None = None) -> list[SearchResult]:
     query = query.strip()
     if not query:
         return []
 
     limit = limit or settings.search_limit
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
-        groups = await asyncio.gather(
-            _search_wolnelektury(client, query, limit),
-            _search_gutenberg(client, query, limit),
-            return_exceptions=True,
-        )
+        searches = [_search_gutenberg(client, query, limit, language)]
+        if _source_matches_language("wolnelektury", language):
+            searches.append(_search_wolnelektury(client, query, limit))
+        if _source_matches_language("standardebooks", language):
+            searches.append(_search_standardebooks(client, query, limit))
+
+        groups = await asyncio.gather(*searches, return_exceptions=True)
 
     results: list[SearchResult] = []
     for group in groups:
@@ -168,6 +257,20 @@ async def search(query: str, limit: int | None = None) -> list[SearchResult]:
 
 
 async def resolve(source: str, ref: str, book_format: str) -> tuple[str, str, str]:
+    if not SAFE_REF.match(ref):
+        raise ValueError("Invalid book reference.")
+
+    if source == "standardebooks":
+        parts = ref.split("_")
+        if len(parts) < 2:
+            raise ValueError("Invalid book reference.")
+        formats = _standardebooks_formats(ref, parts)
+        url = formats.get(book_format)
+        if not url:
+            raise ValueError(f"Format '{book_format}' is not available for this book.")
+        title, author = _standardebooks_title_author("", parts)
+        return url, title, author
+
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
         if source == "wolnelektury":
             response = await client.get(WOLNELEKTURY_BOOK_URL.format(slug=ref))
@@ -205,6 +308,11 @@ async def download(url: str, destination: Path, max_bytes: int | None = None) ->
                     continue
 
                 response.raise_for_status()
+
+                content_type = response.headers.get("content-type", "").split(";")[0].strip()
+                if content_type in REJECTED_CONTENT_TYPES:
+                    raise ValueError("Download failed: the source returned a web page, not a file.")
+
                 size = 0
                 too_large = False
                 with destination.open("wb") as out:

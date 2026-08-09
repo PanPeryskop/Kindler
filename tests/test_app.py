@@ -76,7 +76,7 @@ async def test_filename_with_traversal_stays_in_temp_dir(tmp_path: Path):
 async def test_search_endpoint_renders_results(monkeypatch):
     from app.services import library
 
-    async def fake_search(query, limit=None):
+    async def fake_search(query, language="", limit=None):
         return [
             library.SearchResult(
                 source="wolnelektury",
@@ -85,6 +85,7 @@ async def test_search_endpoint_renders_results(monkeypatch):
                 author="Henryk Sienkiewicz",
                 cover_url="https://wolnelektury.pl/cover.jpg",
                 formats={"epub": "https://wolnelektury.pl/x.epub", "mobi": "https://x/y.mobi"},
+                language="pl",
             )
         ]
 
@@ -99,10 +100,28 @@ async def test_search_endpoint_renders_results(monkeypatch):
     assert 'value="mobi"' in response.text
 
 
+async def test_search_endpoint_passes_language_and_rejects_bogus_codes(monkeypatch):
+    from app.services import library
+
+    seen: list[str] = []
+
+    async def fake_search(query, language="", limit=None):
+        seen.append(language)
+        return []
+
+    monkeypatch.setattr(library, "search", fake_search)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.get("/search", params={"q": "x", "lang": "pl"})
+        await client.get("/search", params={"q": "x", "lang": "klingon"})
+
+    assert seen == ["pl", ""]
+
+
 async def test_search_endpoint_reports_empty_query(monkeypatch):
     from app.services import library
 
-    async def fake_search(query, limit=None):
+    async def fake_search(query, language="", limit=None):
         return []
 
     monkeypatch.setattr(library, "search", fake_search)

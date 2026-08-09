@@ -57,6 +57,26 @@ WL_DETAIL = {
 }
 
 
+GITHUB_PAYLOAD = {
+    "items": [
+        {
+            "name": "bram-stoker_dracula",
+            "description": (
+                "Epub source for the Standard Ebooks edition of Dracula, by Bram Stoker"
+            ),
+        },
+        {
+            "name": "omar-khayyam_the-rubaiyat_edward-fitzgerald",
+            "description": (
+                "Epub source for the Standard Ebooks edition of The Rubaiyat, "
+                "by Omar Khayyam and translated by Edward FitzGerald"
+            ),
+        },
+        {"name": "tools", "description": "The Standard Ebooks toolset"},
+    ]
+}
+
+
 @pytest.fixture(autouse=True)
 def clear_catalog_cache():
     library._catalog = []
@@ -73,6 +93,8 @@ def fake_api(calls: list[str] | None = None):
         url = str(request.url)
         if "gutendex.com/books/345" in url:
             return httpx.Response(200, json=GUTENDEX_PAYLOAD["results"][1])
+        if "api.github.com" in url:
+            return httpx.Response(200, json=GITHUB_PAYLOAD)
         if "gutendex.com" in url:
             return httpx.Response(200, json=GUTENDEX_PAYLOAD)
         if url.rstrip("/").endswith("/api/books"):
@@ -94,13 +116,78 @@ def patch_client(monkeypatch, transport):
     monkeypatch.setattr(library.httpx, "AsyncClient", build)
 
 
-async def test_search_merges_both_sources(monkeypatch):
+async def test_search_merges_all_three_sources(monkeypatch):
     patch_client(monkeypatch, fake_api())
 
     results = await library.search("quo vadis")
 
     sources = {r.source for r in results}
-    assert sources == {"wolnelektury", "gutenberg"}
+    assert sources == {"wolnelektury", "gutenberg", "standardebooks"}
+
+
+async def test_standardebooks_builds_download_urls_from_repo_name(monkeypatch):
+    patch_client(monkeypatch, fake_api())
+
+    results = await library.search("dracula")
+    dracula = next(r for r in results if r.ref == "bram-stoker_dracula")
+
+    base = "https://standardebooks.org/ebooks/bram-stoker/dracula/downloads/"
+    assert dracula.title == "Dracula"
+    assert dracula.author == "Bram Stoker"
+    assert dracula.formats["epub"] == f"{base}bram-stoker_dracula.epub?source=feed"
+    assert dracula.formats["azw3"] == f"{base}bram-stoker_dracula.azw3?source=feed"
+    assert dracula.cover_url == f"{base}cover.jpg"
+    assert dracula.language == "en"
+
+
+async def test_standardebooks_handles_translator_in_repo_name(monkeypatch):
+    patch_client(monkeypatch, fake_api())
+
+    results = await library.search("rubaiyat")
+    book = next(r for r in results if "rubaiyat" in r.ref)
+
+    assert book.title == "The Rubaiyat"
+    assert book.author == "Omar Khayyam"
+    assert "/omar-khayyam/the-rubaiyat/edward-fitzgerald/" in book.formats["epub"]
+
+
+async def test_standardebooks_skips_non_book_repos(monkeypatch):
+    patch_client(monkeypatch, fake_api())
+
+    results = await library.search("tools")
+
+    assert all(r.ref != "tools" for r in results)
+
+
+async def test_language_filter_keeps_only_matching_sources(monkeypatch):
+    patch_client(monkeypatch, fake_api())
+
+    polish = await library.search("quo vadis", language="pl")
+    english = await library.search("dracula", language="en")
+
+    assert {r.source for r in polish} == {"wolnelektury", "gutenberg"}
+    assert "standardebooks" not in {r.source for r in polish}
+    assert "wolnelektury" not in {r.source for r in english}
+
+
+async def test_language_is_passed_to_gutendex(monkeypatch):
+    calls: list[str] = []
+    patch_client(monkeypatch, fake_api(calls))
+
+    await library.search("dracula", language="pl")
+
+    gutendex = [c for c in calls if "gutendex" in c]
+    assert any("languages=pl" in c for c in gutendex)
+
+
+async def test_no_language_filter_queries_gutendex_without_param(monkeypatch):
+    calls: list[str] = []
+    patch_client(monkeypatch, fake_api(calls))
+
+    await library.search("dracula")
+
+    gutendex = [c for c in calls if "gutendex" in c]
+    assert all("languages=" not in c for c in gutendex)
 
 
 async def test_book_without_epub_still_offers_convertible_formats(monkeypatch):
@@ -200,6 +287,26 @@ async def test_resolve_rejects_unknown_source():
         await library.resolve("libgen", "x", "epub")
 
 
+async def test_resolve_standardebooks_needs_no_network():
+    url, title, author = await library.resolve("standardebooks", "bram-stoker_dracula", "epub")
+
+    assert url == (
+        "https://standardebooks.org/ebooks/bram-stoker/dracula/downloads/"
+        "bram-stoker_dracula.epub?source=feed"
+    )
+    assert (title, author) == ("Dracula", "Bram Stoker")
+    assert library.host_allowed(url)
+
+
+@pytest.mark.parametrize(
+    "ref",
+    ["../../etc/passwd", "bram-stoker/dracula", "a b", "", "-leading-dash"],
+)
+async def test_resolve_rejects_unsafe_refs(ref: str):
+    with pytest.raises(ValueError, match="Invalid book reference"):
+        await library.resolve("standardebooks", ref, "epub")
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -240,6 +347,22 @@ async def test_download_follows_allowed_redirect(tmp_path: Path, monkeypatch):
     await library.download("https://www.gutenberg.org/redirect.epub", destination)
 
     assert destination.read_bytes() == b"PK\x03\x04payload"
+
+
+async def test_download_rejects_html_interstitial_page(tmp_path: Path, monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"<?xml version='1.0'?><html>Your Download Has Started!</html>",
+            headers={"content-type": "application/xhtml+xml; charset=utf-8"},
+        )
+
+    patch_client(monkeypatch, httpx.MockTransport(handler))
+
+    with pytest.raises(ValueError, match="not a file"):
+        await library.download(
+            "https://standardebooks.org/ebooks/a/b/downloads/a_b.epub", tmp_path / "out.epub"
+        )
 
 
 async def test_download_aborts_when_too_large(tmp_path: Path, monkeypatch):

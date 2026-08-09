@@ -1,4 +1,8 @@
-{% set source_labels = {'wolnelektury': 'Wolne Lektury', 'gutenberg': 'Gutenberg'} %}
+{% set source_labels = {
+'wolnelektury': 'Wolne Lektury',
+'gutenberg': 'Gutenberg',
+'standardebooks': 'Standard Ebooks',
+} %}
 
 {% if error %}
 <div class="job-card__error">{{ error }}</div>
@@ -16,7 +20,10 @@
   <div class="search-result__body">
     <div class="search-result__title">{{ result.title }}</div>
     <div class="search-result__author">{{ result.author }}</div>
-    <span class="search-result__source">{{ source_labels.get(result.source, result.source) }}</span>
+    <span class="search-result__source">
+      {{ source_labels.get(result.source, result.source) }}
+      {%- if result.language %} &middot; {{ result.language }}{% endif %}
+    </span>
 
     <form class="search-result__formats" hx-post="/library/download" hx-target="#jobs-list"
       hx-swap="afterbegin" hx-indicator="closest .search-result"
