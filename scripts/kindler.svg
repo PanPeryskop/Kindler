@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs><clipPath id="r"><rect x="6" y="6" width="244" height="244" rx="54"/></clipPath></defs>
+  <g clip-path="url(#r)">
+    <rect x="6" y="6.000" width="244" height="4.412" fill="#5C73FF"/>
+    <rect x="6" y="9.812" width="244" height="4.412" fill="#5B72FE"/>
+    <rect x="6" y="13.625" width="244" height="4.412" fill="#5A71FD"/>
+    <rect x="6" y="17.438" width="244" height="4.412" fill="#5970FC"/>
+    <rect x="6" y="21.250" width="244" height="4.412" fill="#586FFC"/>
+    <rect x="6" y="25.062" width="244" height="4.412" fill="#586FFB"/>
+    <rect x="6" y="28.875" width="244" height="4.412" fill="#576EFA"/>
+    <rect x="6" y="32.688" width="244" height="4.412" fill="#566DF9"/>
+    <rect x="6" y="36.500" width="244" height="4.412" fill="#556CF8"/>
+    <rect x="6" y="40.312" width="244" height="4.412" fill="#546BF7"/>
+    <rect x="6" y="44.125" width="244" height="4.412" fill="#536AF6"/>
+    <rect x="6" y="47.938" width="244" height="4.412" fill="#5269F6"/>
+    <rect x="6" y="51.750" width="244" height="4.412" fill="#5168F5"/>
+    <rect x="6" y="55.562" width="244" height="4.412" fill="#5067F4"/>
+    <rect x="6" y="59.375" width="244" height="4.412" fill="#5067F3"/>
+    <rect x="6" y="63.188" width="244" height="4.412" fill="#4F66F2"/>
+    <rect x="6" y="67.000" width="244" height="4.412" fill="#4E65F1"/>
+    <rect x="6" y="70.812" width="244" height="4.412" fill="#4D64F0"/>
+    <rect x="6" y="74.625" width="244" height="4.412" fill="#4C63F0"/>
+    <rect x="6" y="78.438" width="244" height="4.412" fill="#4B62EF"/>
+    <rect x="6" y="82.250" width="244" height="4.412" fill="#4A61EE"/>
+    <rect x="6" y="86.062" width="244" height="4.412" fill="#4960ED"/>
+    <rect x="6" y="89.875" width="244" height="4.412" fill="#485FEC"/>
+    <rect x="6" y="93.688" width="244" height="4.412" fill="#485FEB"/>
+    <rect x="6" y="97.500" width="244" height="4.412" fill="#475EEA"/>
+    <rect x="6" y="101.312" width="244" height="4.412" fill="#465DEA"/>
+    <rect x="6" y="105.125" width="244" height="4.412" fill="#455CE9"/>
+    <rect x="6" y="108.938" width="244" height="4.412" fill="#445BE8"/>
+    <rect x="6" y="112.750" width="244" height="4.412" fill="#435AE7"/>
+    <rect x="6" y="116.562" width="244" height="4.412" fill="#4259E6"/>
+    <rect x="6" y="120.375" width="244" height="4.412" fill="#4158E5"/>
+    <rect x="6" y="124.188" width="244" height="4.412" fill="#4057E4"/>
+    <rect x="6" y="128.000" width="244" height="4.412" fill="#4057E4"/>
+    <rect x="6" y="131.812" width="244" height="4.412" fill="#3F56E3"/>
+    <rect x="6" y="135.625" width="244" height="4.412" fill="#3E55E2"/>
+    <rect x="6" y="139.438" width="244" height="4.412" fill="#3D54E1"/>
+    <rect x="6" y="143.250" width="244" height="4.412" fill="#3C53E0"/>
+    <rect x="6" y="147.062" width="244" height="4.412" fill="#3B52DF"/>
+    <rect x="6" y="150.875" width="244" height="4.412" fill="#3A51DE"/>
+    <rect x="6" y="154.688" width="244" height="4.412" fill="#3950DE"/>
+    <rect x="6" y="158.500" width="244" height="4.412" fill="#384FDD"/>
+    <rect x="6" y="162.312" width="244" height="4.412" fill="#384FDC"/>
+    <rect x="6" y="166.125" width="244" height="4.412" fill="#374EDB"/>
+    <rect x="6" y="169.938" width="244" height="4.412" fill="#364DDA"/>
+    <rect x="6" y="173.750" width="244" height="4.412" fill="#354CD9"/>
+    <rect x="6" y="177.562" width="244" height="4.412" fill="#344BD8"/>
+    <rect x="6" y="181.375" width="244" height="4.412" fill="#334AD8"/>
+    <rect x="6" y="185.188" width="244" height="4.412" fill="#3249D7"/>
+    <rect x="6" y="189.000" width="244" height="4.412" fill="#3148D6"/>
+    <rect x="6" y="192.812" width="244" height="4.412" fill="#3047D5"/>
+    <rect x="6" y="196.625" width="244" height="4.412" fill="#3047D4"/>
+    <rect x="6" y="200.438" width="244" height="4.412" fill="#2F46D3"/>
+    <rect x="6" y="204.250" width="244" height="4.412" fill="#2E45D2"/>
+    <rect x="6" y="208.062" width="244" height="4.412" fill="#2D44D2"/>
+    <rect x="6" y="211.875" width="244" height="4.412" fill="#2C43D1"/>
+    <rect x="6" y="215.688" width="244" height="4.412" fill="#2B42D0"/>
+    <rect x="6" y="219.500" width="244" height="4.412" fill="#2A41CF"/>
+    <rect x="6" y="223.312" width="244" height="4.412" fill="#2940CE"/>
+    <rect x="6" y="227.125" width="244" height="4.412" fill="#283FCD"/>
+    <rect x="6" y="230.938" width="244" height="4.412" fill="#283FCC"/>
+    <rect x="6" y="234.750" width="244" height="4.412" fill="#273ECC"/>
+    <rect x="6" y="238.562" width="244" height="4.412" fill="#263DCB"/>
+    <rect x="6" y="242.375" width="244" height="4.412" fill="#253CCA"/>
+    <rect x="6" y="246.188" width="244" height="4.412" fill="#243BC9"/>
+  </g>
+  <g fill="none" stroke="#FFFDF5" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M128 74 v92"/>
+    <path d="M128 74 C 128 54 111 42 89 42 H 50 v100 h 39 c 22 0 39 11 39 24"/>
+    <path d="M128 74 C 128 54 145 42 167 42 H 206 v100 h -39 c -22 0 -39 11 -39 24"/>
+  </g>
+  <path d="M128 176 v34 m-19 -19 l19 19 l19 -19" fill="none" stroke="#FFD600" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
