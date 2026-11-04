@@ -1,6 +1,7 @@
 import asyncio
 import html
 import logging
+import shutil
 import tempfile
 from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
@@ -23,6 +24,7 @@ from app.services.metadata import apply_metadata, probe_metadata
 from app.services.sender import send_to_kindle
 
 REVIEW_TTL = timedelta(hours=6)
+NATIVE_TYPES = ("epub", "pdf")
 CLEANUP_INTERVAL_SECONDS = 900
 
 job_queue = JobQueue()
@@ -71,6 +73,7 @@ templates = Jinja2Templates(directory="app/templates")
 
 
 def render_job_card(request: Request, job: Job) -> str:
+    downloadable = bool(job.tmp_path and Path(job.tmp_path).exists())
     return templates.get_template("partials/job_card.html").render(
         {
             "request": request,
@@ -81,7 +84,8 @@ def render_job_card(request: Request, job: Job) -> str:
             "title": job.title,
             "author": job.author,
             "cover": job.cover,
-            "downloadable": bool(job.tmp_path and Path(job.tmp_path).exists()),
+            "downloadable": downloadable,
+            "convertible": downloadable and Path(job.filename).suffix.lower() != ".epub",
         }
     )
 
@@ -107,7 +111,7 @@ async def process_file_job(job_id: str) -> None:
             await job_queue.update(job_id, "failed", f"Invalid file type: {file_type}")
             return
 
-        if file_type in ["epub", "pdf"]:
+        if file_type in NATIVE_TYPES:
             outgoing, outgoing_type = tmp_path, file_type
         else:
             await job_queue.update(job_id, "converting")
@@ -278,6 +282,57 @@ async def send_job(
 
     await job_queue.set(job_id, title=title, author=author, status="pending")
     background_tasks.add_task(process_file_job, job_id)
+    return render_job_card(request, await job_queue.get(job_id))
+
+
+async def convert_job(job_id: str) -> None:
+    job = await job_queue.get(job_id)
+    if not job or not job.tmp_path:
+        return
+
+    source = Path(job.tmp_path)
+    converted, error = await CalibreConverter.convert_to_epub(source)
+    job = await job_queue.get(job_id)
+    if not job:
+        source.unlink(missing_ok=True)
+        if converted:
+            converted.unlink(missing_ok=True)
+        return
+    if error or not converted:
+        await job_queue.update(job_id, "review", f"Calibre conversion error: {error}")
+        return
+
+    filename = f"{Path(job.filename).stem}.epub"
+    target = source.with_name(f"{job.id}_{filename}")
+    try:
+        await asyncio.to_thread(shutil.move, converted, target)
+    except OSError as exc:
+        converted.unlink(missing_ok=True)
+        await job_queue.update(job_id, "review", f"Could not store the converted file: {exc}")
+        return
+
+    source.unlink(missing_ok=True)
+    await job_queue.set(
+        job_id, tmp_path=str(target), filename=filename, status="review", error=None
+    )
+
+
+@app.post("/jobs/{job_id}/convert", response_class=HTMLResponse)
+async def convert_job_file(
+    request: Request,
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    title: str = Form(""),
+    author: str = Form(""),
+):
+    job = await job_queue.get(job_id)
+    if not job or not job.tmp_path or not Path(job.tmp_path).exists():
+        return HTMLResponse("<div class='job-card__error'>Job not found</div>")
+    if job.status != "review" or Path(job.filename).suffix.lower() == ".epub":
+        return render_job_card(request, job)
+
+    await job_queue.set(job_id, title=title, author=author, status="converting", error=None)
+    background_tasks.add_task(convert_job, job_id)
     return render_job_card(request, await job_queue.get(job_id))
 
 

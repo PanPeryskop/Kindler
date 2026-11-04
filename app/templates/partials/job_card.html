@@ -1,5 +1,19 @@
-{% macro actions() %}
+{% macro actions(review=false) %}
 <span class="job-card__actions">
+  {% if review and convertible %}
+  <details class="job-menu">
+    <summary class="job-card__action" title="Convert" aria-label="Convert">
+      <i data-lucide="settings" style="width:14px;height:14px;"></i>
+    </summary>
+    <div class="job-menu__list">
+      <button type="button" class="job-menu__item" hx-post="/jobs/{{ job_id }}/convert"
+        hx-include="#job-{{ job_id }}" hx-target="#job-{{ job_id }}" hx-swap="outerHTML">
+        <i data-lucide="refresh-cw" style="width:13px;height:13px;"></i>
+        Convert to EPUB
+      </button>
+    </div>
+  </details>
+  {% endif %}
   {% if downloadable %}
   <a class="job-card__action" href="/jobs/{{ job_id }}/file" download
     title="Download to this device" aria-label="Download to this device">
@@ -29,8 +43,11 @@
   <div class="job-card__header">
     <span class="job-card__name" title="{{ filename }}">{{ filename }}</span>
     <span class="job-card__status status--review">Review</span>
-    {{ actions() }}
+    {{ actions(review=true) }}
   </div>
+  {% if error %}
+  <div class="job-card__error">{{ error }}</div>
+  {% endif %}
   <div class="review">
     {% if cover %}<img class="review__cover" src="{{ cover }}" alt="">{% endif %}
     <div class="review__fields">

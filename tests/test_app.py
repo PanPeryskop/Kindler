@@ -371,3 +371,88 @@ async def test_deleting_a_missing_job_is_a_no_op():
         response = await client.delete("/jobs/doesnotexist")
 
     assert response.status_code == 200
+
+
+async def make_pdf_job(tmp_path: Path) -> tuple[str, Path]:
+    job = await job_queue.add("book.pdf", status="review", kindle_address="k@kindle.com")
+    stored = tmp_path / f"{job.id}_book.pdf"
+    stored.write_bytes(b"%PDF-1.4 fake")
+    await job_queue.set(job.id, tmp_path=str(stored), title="Dracula", author="Bram Stoker")
+    return job.id, stored
+
+
+def fake_converter(monkeypatch, tmp_path: Path, error: str | None = None):
+    async def convert_to_epub(input_path: Path):
+        if error:
+            return None, error
+        output = tmp_path / "calibre-output.epub"
+        make_epub(output, "Dracula", "Bram Stoker")
+        return output, None
+
+    monkeypatch.setattr("app.main.CalibreConverter.convert_to_epub", convert_to_epub)
+
+
+async def test_review_card_offers_conversion_only_for_non_epub(tmp_path: Path):
+    pdf_id, _ = await make_pdf_job(tmp_path)
+    epub_id, _ = await make_review_job(tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        pdf_card = await client.get(f"/jobs/{pdf_id}")
+        epub_card = await client.get(f"/jobs/{epub_id}")
+
+    assert f'hx-post="/jobs/{pdf_id}/convert"' in pdf_card.text
+    assert "/convert" not in epub_card.text
+
+
+async def test_convert_replaces_the_file_with_an_epub(tmp_path: Path, monkeypatch):
+    fake_converter(monkeypatch, tmp_path)
+    job_id, stored = await make_pdf_job(tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/jobs/{job_id}/convert", data={"title": "Drakula", "author": "B. Stoker"}
+        )
+        download = await client.get(f"/jobs/{job_id}/file")
+
+    assert "Converting" in response.text
+    job = await job_queue.get(job_id)
+    assert job.status == "review"
+    assert job.filename == "book.epub"
+    assert (job.title, job.author) == ("Drakula", "B. Stoker")
+    assert not stored.exists()
+    assert Path(job.tmp_path).name == f"{job_id}_book.epub"
+    assert "book.epub" in download.headers["content-disposition"]
+    Path(job.tmp_path).unlink(missing_ok=True)
+
+
+async def test_failed_conversion_keeps_the_original(tmp_path: Path, monkeypatch):
+    fake_converter(monkeypatch, tmp_path, error="broken pdf")
+    job_id, stored = await make_pdf_job(tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(f"/jobs/{job_id}/convert")
+        card = await client.get(f"/jobs/{job_id}")
+
+    job = await job_queue.get(job_id)
+    assert job.status == "review"
+    assert job.filename == "book.pdf"
+    assert stored.exists()
+    assert "broken pdf" in card.text
+
+
+async def test_convert_is_refused_outside_review(tmp_path: Path, monkeypatch):
+    fake_converter(monkeypatch, tmp_path)
+    job_id, stored = await make_pdf_job(tmp_path)
+    await job_queue.update(job_id, "sending")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(f"/jobs/{job_id}/convert")
+
+    job = await job_queue.get(job_id)
+    assert job.status == "sending"
+    assert job.filename == "book.pdf"
+    assert stored.exists()

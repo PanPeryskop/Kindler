@@ -256,6 +256,12 @@
       if (counter) counter.textContent = count;
     }
 
+    document.addEventListener('click', (event) => {
+      document.querySelectorAll('.job-menu[open]').forEach((menu) => {
+        if (!menu.contains(event.target)) menu.removeAttribute('open');
+      });
+    });
+
     new MutationObserver(updateJobCount)
       .observe(document.getElementById('jobs-list'), { childList: true });
 
