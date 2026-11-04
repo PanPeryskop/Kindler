@@ -10,6 +10,9 @@ Upload a file or pick a book from a catalogue, Kindler converts it if needed and
 - Other formats (MOBI, AZW3, FB2, DOCX, HTML, TXT, images) are converted to EPUB via Calibre
 - Search Project Gutenberg, Wolne Lektury, Standard Ebooks and Z-Library
 - Edit title and author before sending, download the file or remove it from the queue
+- Look up title, author and cover in Open Library / Google Books; the cover is embedded into EPUBs
+- Convert any file (PDF included) to EPUB on demand and download the result
+- Filter Z-Lib results by language and format, and load more pages
 - Background job status (pending → converting → sending → sent)
 - Simple HTMX-based UI, no JavaScript build step
 

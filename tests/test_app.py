@@ -500,3 +500,55 @@ async def test_appended_page_without_results_is_silent(monkeypatch):
 
     assert "Nothing found" not in response.text
     assert "Load more" not in response.text
+
+
+async def test_lookup_fills_the_review_card(tmp_path: Path, monkeypatch):
+    from app.services.lookup import BookInfo
+
+    seen = []
+
+    async def fake_lookup(title, author):
+        seen.append((title, author))
+        return BookInfo("Dracula", "Bram Stoker", "data:image/jpeg;base64,AAAA")
+
+    monkeypatch.setattr("app.main.lookup", fake_lookup)
+    job_id, _ = await make_pdf_job(tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/jobs/{job_id}/lookup", data={"title": "dracula", "author": ""}
+        )
+
+    assert seen == [("dracula", "")]
+    assert 'value="Dracula"' in response.text
+    assert 'value="Bram Stoker"' in response.text
+    assert "data:image/jpeg;base64,AAAA" in response.text
+    assert (await job_queue.get(job_id)).cover == "data:image/jpeg;base64,AAAA"
+
+
+async def test_lookup_without_match_keeps_typed_values(tmp_path: Path, monkeypatch):
+    async def fake_lookup(title, author):
+        return None
+
+    monkeypatch.setattr("app.main.lookup", fake_lookup)
+    job_id, _ = await make_pdf_job(tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/jobs/{job_id}/lookup", data={"title": "Moja ksiazka", "author": "Ja"}
+        )
+
+    assert 'value="Moja ksiazka"' in response.text
+    assert "No match found" in response.text
+
+
+async def test_review_card_always_offers_lookup(tmp_path: Path):
+    job_id, _ = await make_review_job(tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/jobs/{job_id}")
+
+    assert f'hx-post="/jobs/{job_id}/lookup"' in response.text

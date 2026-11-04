@@ -21,7 +21,8 @@ from app.services import library, z_lib
 from app.services.convert import CalibreConverter
 from app.services.covers import extract_cover
 from app.services.detect import FileTypeDetector
-from app.services.metadata import apply_metadata, probe_metadata
+from app.services.lookup import lookup, merge
+from app.services.metadata import apply_cover, apply_metadata, probe_metadata
 from app.services.sender import send_to_kindle
 
 REVIEW_TTL = timedelta(hours=6)
@@ -125,6 +126,7 @@ async def process_file_job(job_id: str) -> None:
         await asyncio.to_thread(
             apply_metadata, outgoing, outgoing_type, job.title or "", job.author or ""
         )
+        await asyncio.to_thread(apply_cover, outgoing, outgoing_type, job.cover)
 
         await job_queue.update(job_id, "sending")
         await send_to_kindle(
@@ -360,6 +362,45 @@ async def convert_job_file(
 
     await job_queue.set(job_id, title=title, author=author, status="converting", error=None)
     background_tasks.add_task(convert_job, job_id)
+    return render_job_card(request, await job_queue.get(job_id))
+
+
+@app.post("/jobs/{job_id}/lookup", response_class=HTMLResponse)
+async def lookup_job_metadata(
+    request: Request,
+    job_id: str,
+    title: str = Form(""),
+    author: str = Form(""),
+):
+    job = await job_queue.get(job_id)
+    if not job:
+        return HTMLResponse("<div class='job-card__error'>Job not found</div>")
+    if job.status != "review":
+        return render_job_card(request, job)
+
+    try:
+        found = await lookup(title, author)
+    except Exception:
+        logger.exception("Metadata lookup failed for job %s", job_id)
+        found = None
+    if found is not None:
+        found = merge(title, author, found)
+
+    if found is None:
+        await job_queue.set(
+            job_id,
+            title=title,
+            author=author,
+            error="No match found in Open Library or Google Books.",
+        )
+    else:
+        await job_queue.set(
+            job_id,
+            title=found.title,
+            author=found.author,
+            cover=found.cover or job.cover,
+            error=None,
+        )
     return render_job_card(request, await job_queue.get(job_id))
 
 

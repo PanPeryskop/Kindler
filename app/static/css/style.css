@@ -780,6 +780,11 @@ summary.job-card__action::-webkit-details-marker {
   background: var(--bg-alt);
 }
 
+.job-menu__item[disabled] {
+  opacity: 0.5;
+  cursor: progress;
+}
+
 .job-card__action--danger:hover {
   background: var(--hot);
   border-color: var(--hot);

@@ -118,3 +118,56 @@ def test_unsupported_type_is_ignored(tmp_path: Path):
     apply_metadata(f, "txt", "T", "A")
 
     assert f.read_bytes() == before
+
+
+def cover_uri(data: bytes, mime: str = "image/jpeg") -> str:
+    import base64
+
+    return f"data:{mime};base64,{base64.b64encode(data).decode()}"
+
+
+def test_cover_is_added_to_an_epub_without_one(tmp_path: Path):
+    from app.services.covers import epub_cover
+    from app.services.metadata import apply_cover
+
+    path = tmp_path / "book.epub"
+    make_epub(path, "Dune", "Frank Herbert")
+    uri = cover_uri(b"\xff\xd8new-cover")
+
+    apply_cover(path, "epub", uri)
+
+    assert epub_cover(path) == uri
+    assert read_raw_metadata(path, "epub") == ("Dune", "Frank Herbert")
+
+
+def test_existing_epub_cover_is_replaced_in_place(tmp_path: Path):
+    from app.services.covers import epub_cover
+    from app.services.metadata import apply_cover
+
+    path = tmp_path / "book.epub"
+    make_epub(path, "Dune", "Frank Herbert")
+    book = epub.read_epub(str(path))
+    book.set_cover("cover.jpg", b"\xff\xd8old-cover", create_page=False)
+    epub.write_epub(str(path), book)
+    uri = cover_uri(b"\xff\xd8new-cover")
+
+    apply_cover(path, "epub", uri)
+
+    assert epub_cover(path) == uri
+    with zipfile.ZipFile(path) as archive:
+        opf = next(n for n in archive.namelist() if n.endswith(".opf"))
+        assert archive.read(opf).decode().count('name="cover"') == 1
+
+
+def test_cover_is_left_alone_for_pdfs_and_bad_data(tmp_path: Path):
+    from app.services.metadata import apply_cover
+
+    path = tmp_path / "book.epub"
+    make_epub(path, "Dune", "Frank Herbert")
+    before = path.read_bytes()
+
+    apply_cover(path, "epub", "data:text/html;base64,PGh0bWw+")
+    apply_cover(path, "epub", None)
+    apply_cover(path, "pdf", cover_uri(b"x"))
+
+    assert path.read_bytes() == before

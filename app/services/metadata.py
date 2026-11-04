@@ -1,11 +1,19 @@
+import base64
+import binascii
 import logging
+import mimetypes
 from pathlib import Path
 
+import ebooklib
 import fitz
 from ebooklib import epub
 from slugify import slugify
 
+from app.services.covers import epub_cover
+
 logger = logging.getLogger(__name__)
+
+COVER_ID = "kindler-cover"
 
 
 def extract_epub_metadata(epub_path: Path) -> tuple[str, str, str]:
@@ -90,3 +98,52 @@ def apply_metadata(path: Path, file_type: str, title: str, author: str) -> None:
             _write_pdf_metadata(path, new_title, new_author)
     except Exception:
         logger.warning("Could not write metadata to %s", path.name, exc_info=True)
+
+
+def _decode_data_uri(uri: str) -> tuple[str, bytes] | None:
+    header, _, payload = uri.partition(",")
+    if not header.startswith("data:image/") or not header.endswith(";base64"):
+        return None
+    try:
+        return header[5:].removesuffix(";base64"), base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _epub_cover_item(book: epub.EpubBook) -> epub.EpubItem | None:
+    for item in book.get_items_of_type(ebooklib.ITEM_COVER):
+        return item
+    for _, attrs in book.get_metadata("OPF", "meta"):
+        if attrs.get("name") == "cover":
+            return book.get_item_with_id(attrs.get("content", ""))
+    return None
+
+
+def _write_epub_cover(path: Path, media_type: str, image: bytes) -> None:
+    book = epub.read_epub(str(path))
+    current = _epub_cover_item(book)
+    if current is not None:
+        current.content = image
+        current.media_type = media_type
+    else:
+        extension = mimetypes.guess_extension(media_type) or ".jpg"
+        cover = epub.EpubCover(uid=COVER_ID, file_name=f"{COVER_ID}{extension}")
+        cover.content = image
+        cover.media_type = media_type
+        book.add_item(cover)
+        opf = book.metadata.setdefault(epub.NAMESPACES["OPF"], {})
+        opf["meta"] = [meta for meta in opf.get("meta", []) if meta[1].get("name") != "cover"]
+        book.add_metadata(None, "meta", "", {"name": "cover", "content": COVER_ID})
+    epub.write_epub(str(path), book)
+
+
+def apply_cover(path: Path, file_type: str, cover: str | None) -> None:
+    if file_type != "epub" or not cover or cover == epub_cover(path):
+        return
+    decoded = _decode_data_uri(cover)
+    if decoded is None:
+        return
+    try:
+        _write_epub_cover(path, *decoded)
+    except Exception:
+        logger.warning("Could not write cover to %s", path.name, exc_info=True)

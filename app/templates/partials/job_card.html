@@ -1,16 +1,24 @@
 {% macro actions(review=false) %}
 <span class="job-card__actions">
-  {% if review and convertible %}
+  {% if review %}
   <details class="job-menu">
-    <summary class="job-card__action" title="Convert" aria-label="Convert">
+    <summary class="job-card__action" title="More actions" aria-label="More actions">
       <i data-lucide="settings" style="width:14px;height:14px;"></i>
     </summary>
     <div class="job-menu__list">
+      <button type="button" class="job-menu__item" hx-post="/jobs/{{ job_id }}/lookup"
+        hx-include="#job-{{ job_id }}" hx-target="#job-{{ job_id }}" hx-swap="outerHTML"
+        hx-disabled-elt="this">
+        <i data-lucide="search" style="width:13px;height:13px;"></i>
+        Find metadata
+      </button>
+      {% if convertible %}
       <button type="button" class="job-menu__item" hx-post="/jobs/{{ job_id }}/convert"
         hx-include="#job-{{ job_id }}" hx-target="#job-{{ job_id }}" hx-swap="outerHTML">
         <i data-lucide="refresh-cw" style="width:13px;height:13px;"></i>
         Convert to EPUB
       </button>
+      {% endif %}
     </div>
   </details>
   {% endif %}
