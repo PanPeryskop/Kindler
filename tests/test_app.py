@@ -645,3 +645,29 @@ async def test_cover_upload_rejects_non_images_and_large_files(tmp_path: Path, m
     assert "JPEG, PNG or GIF" in html_response.text
     assert "smaller than" in big_response.text
     assert (await job_queue.get(job_id)).cover is None
+
+
+async def test_polling_skips_the_swap_while_the_status_is_unchanged(tmp_path: Path):
+    job_id, _ = await make_review_job(tmp_path, status="sending")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        unchanged = await client.get(f"/jobs/{job_id}", params={"since": "sending"})
+        await job_queue.update(job_id, "sent")
+        changed = await client.get(f"/jobs/{job_id}", params={"since": "sending"})
+
+    assert unchanged.status_code == 204
+    assert unchanged.content == b""
+    assert changed.status_code == 200
+    assert "Sent" in changed.text
+
+
+async def test_index_busts_the_stylesheet_cache():
+    from app.main import STATIC_VERSION
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/")
+
+    assert f"/static/css/style.css?v={STATIC_VERSION}" in response.text
+    assert "lucide@latest" not in response.text

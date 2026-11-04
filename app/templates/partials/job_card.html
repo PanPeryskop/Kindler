@@ -86,7 +86,7 @@
 {% else %}
 {% set info = status_map.get(status, status_map['pending']) %}
 {% set is_done = status in ('sent', 'failed') %}
-<div id="job-{{ job_id }}" class="job-card" {% if not is_done %} hx-get="/jobs/{{ job_id }}" hx-trigger="every 2s"
+<div id="job-{{ job_id }}" class="job-card" {% if not is_done %} hx-get="/jobs/{{ job_id }}?since={{ status }}" hx-trigger="every 2s"
   hx-swap="outerHTML" {% endif %}>
   <div class="job-card__header">
     <span class="job-card__name" title="{{ filename }}">{{ filename }}</span>

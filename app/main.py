@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from slugify import slugify
@@ -73,6 +73,7 @@ app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 templates = Jinja2Templates(directory="app/templates")
+STATIC_VERSION = str(int(Path("app/static/css/style.css").stat().st_mtime))
 
 
 def render_job_card(request: Request, job: Job) -> str:
@@ -155,6 +156,7 @@ async def index(request: Request):
         name="index.html",
         context={
             "request": request,
+            "static_version": STATIC_VERSION,
             "default_kindle": settings.kindle_address,
             "max_size": settings.max_attachment_mb,
             "languages": library.LANGUAGES,
@@ -457,8 +459,10 @@ async def delete_job(job_id: str):
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
-async def job_status(request: Request, job_id: str):
+async def job_status(request: Request, job_id: str, since: str = ""):
     job = await job_queue.get(job_id)
     if not job:
         return HTMLResponse("<div class='job-card__error'>Job not found</div>")
+    if since and since == job.status:
+        return Response(status_code=204)
     return render_job_card(request, job)

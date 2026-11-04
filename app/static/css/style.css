@@ -6,6 +6,36 @@
   padding: 0;
 }
 
+html {
+  font-size: clamp(15px, 0.3vw + 12px, 18px);
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+i[data-lucide] {
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
+
 :root {
   --bg: #FFFDF5;
   --bg-alt: #F0ECE2;
@@ -29,10 +59,11 @@
   --border: 3px solid var(--ink);
   --border-thin: 2px solid var(--ink);
   --border-muted: 2px solid #D4D0C8;
-  --shadow: 5px 5px 0px var(--ink);
-  --shadow-sm: 3px 3px 0px var(--ink);
-  --shadow-hover: 7px 7px 0px var(--ink);
-  --shadow-active: 2px 2px 0px var(--ink);
+  --shadow-color: var(--ink);
+  --shadow: 5px 5px 0px var(--shadow-color);
+  --shadow-sm: 3px 3px 0px var(--shadow-color);
+  --shadow-hover: 7px 7px 0px var(--shadow-color);
+  --shadow-active: 2px 2px 0px var(--shadow-color);
 
   --radius: 0px;
   --radius-sm: 0px;
@@ -61,7 +92,7 @@
   --ink-subtle: #999999;
 
   --accent: #5C73FF;
-  --accent-hover: #7A8CFF;
+  --accent-hover: #4459E6;
   --accent-light: #1A2352;
   --hot: #FF4D6D;
   --hot-light: #2A0810;
@@ -73,17 +104,18 @@
   --border: 3px solid #000;
   --border-thin: 2px solid #000;
   --border-muted: 2px solid #333;
-  --shadow: 5px 5px 0px #000;
-  --shadow-sm: 3px 3px 0px #000;
-  --shadow-hover: 7px 7px 0px #000;
-  --shadow-active: 2px 2px 0px #000;
+  --shadow-color: #000;
+  --shadow: 5px 5px 0px var(--shadow-color);
+  --shadow-sm: 3px 3px 0px var(--shadow-color);
+  --shadow-hover: 7px 7px 0px var(--shadow-color);
+  --shadow-active: 2px 2px 0px var(--shadow-color);
 }
 
 
 body {
   transition: background-color var(--duration-lg) var(--ease), color var(--duration-lg) var(--ease);
   font-family: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
-  font-size: 16px;
+  font-size: 1rem;
   line-height: 1.5;
   color: var(--ink);
   background-color: var(--bg);
@@ -114,7 +146,29 @@ h3 {
 
 .main-container {
   width: 100%;
-  max-width: 640px;
+  max-width: clamp(640px, 82vw, 1280px);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+@media (min-width: 1100px) {
+  .workspace {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: var(--space-xl);
+  }
+
+  .workspace__side {
+    position: sticky;
+    top: var(--space-lg);
+  }
+
+  .workspace__side .jobs-section {
+    margin-top: var(--space-xl);
+  }
 }
 
 
@@ -293,6 +347,15 @@ h3 {
 .theme-toggle:hover {
   transform: scale(1.1) rotate(15deg);
   color: var(--accent);
+}
+
+.theme-toggle__icon--light,
+[data-theme="dark"] .theme-toggle__icon--dark {
+  display: none;
+}
+
+[data-theme="dark"] .theme-toggle__icon--light {
+  display: inline-flex;
 }
 
 .main-panel {
@@ -500,12 +563,12 @@ h3 {
   transition: background var(--duration) var(--ease),
     transform var(--duration) var(--ease),
     box-shadow var(--duration) var(--ease);
-  box-shadow: 2px 2px 0px var(--ink);
+  box-shadow: 2px 2px 0px var(--shadow-color);
 }
 
 .check:hover .check__box {
   transform: translate(-1px, -1px);
-  box-shadow: 3px 3px 0px var(--ink);
+  box-shadow: 3px 3px 0px var(--shadow-color);
 }
 
 .check__box .check__mark {
@@ -578,7 +641,7 @@ h3 {
 
 .btn:hover {
   transform: translate(-3px, -3px);
-  box-shadow: 8px 8px 0px var(--ink);
+  box-shadow: 8px 8px 0px var(--shadow-color);
   background: var(--accent-hover);
 }
 
@@ -603,10 +666,12 @@ h3 {
 
 .btn--secondary {
   background: var(--ink);
+  color: var(--bg);
 }
 
 .btn--secondary:hover {
-  background: #333;
+  background: var(--ink-muted);
+  color: var(--bg);
 }
 
 .btn[disabled] {
@@ -845,12 +910,16 @@ summary.job-card__action::-webkit-details-marker {
 }
 
 .status--success {
-  background: #DDFFF0;
+  background: var(--mint-light);
   color: #0A7B3E;
 }
 
+[data-theme="dark"] .status--success {
+  color: var(--mint);
+}
+
 .status--failed {
-  background: #FFE5EA;
+  background: var(--hot-light);
   color: var(--hot);
 }
 
@@ -870,11 +939,21 @@ summary.job-card__action::-webkit-details-marker {
   min-width: 0;
 }
 
-.search-bar .search-bar__lang {
-  flex: 0 0 auto;
-  width: 7.5rem;
+.search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.625rem;
+}
+
+.search-filters .search-filters__select {
+  flex: 0 1 11rem;
+  min-width: 8rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
   padding-left: 0.75rem;
   padding-right: 0.5rem;
+  font-size: 0.85rem;
   cursor: pointer;
 }
 
@@ -1176,9 +1255,9 @@ summary.job-card__action::-webkit-details-marker {
 
 @media (max-width: 768px) {
   :root {
-    --shadow: 4px 4px 0px var(--ink);
-    --shadow-sm: 2px 2px 0px var(--ink);
-    --shadow-hover: 5px 5px 0px var(--ink);
+    --shadow: 4px 4px 0px var(--shadow-color);
+    --shadow-sm: 2px 2px 0px var(--shadow-color);
+    --shadow-hover: 5px 5px 0px var(--shadow-color);
   }
 
   .shell {
@@ -1192,9 +1271,9 @@ summary.job-card__action::-webkit-details-marker {
 
 @media (max-width: 480px) {
   :root {
-    --shadow: 3px 3px 0px var(--ink);
-    --shadow-sm: 2px 2px 0px var(--ink);
-    --shadow-hover: 4px 4px 0px var(--ink);
+    --shadow: 3px 3px 0px var(--shadow-color);
+    --shadow-sm: 2px 2px 0px var(--shadow-color);
+    --shadow-hover: 4px 4px 0px var(--shadow-color);
   }
 
   body {
@@ -1211,8 +1290,6 @@ summary.job-card__action::-webkit-details-marker {
   }
 
   .site-header {
-    flex-direction: column;
-    align-items: flex-start;
     gap: var(--space-sm);
     margin-bottom: var(--space-xl);
     padding-bottom: var(--space-md);
@@ -1246,12 +1323,8 @@ summary.job-card__action::-webkit-details-marker {
     padding: var(--space-md);
   }
 
-  .search-bar {
-    flex-wrap: wrap;
-  }
-
-  .search-bar #search-input {
-    flex-basis: 100%;
+  .search-filters .search-filters__select {
+    flex: 1 1 0;
   }
 
   .dropzone {
