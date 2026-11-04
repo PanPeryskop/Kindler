@@ -1,11 +1,13 @@
 import asyncio
+import html
+import logging
 import tempfile
 from contextlib import asynccontextmanager, suppress
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from slugify import slugify
@@ -13,8 +15,7 @@ from slugify import slugify
 from app.config import settings
 from app.db import Job, init_db
 from app.queue import ACTIVE_STATUSES, JobQueue
-from app.services import library
-from app.services.confirm import watch_for_problem
+from app.services import library, z_lib
 from app.services.convert import CalibreConverter
 from app.services.covers import extract_cover
 from app.services.detect import FileTypeDetector
@@ -25,6 +26,7 @@ REVIEW_TTL = timedelta(hours=6)
 CLEANUP_INTERVAL_SECONDS = 900
 
 job_queue = JobQueue()
+logger = logging.getLogger(__name__)
 
 
 async def discard_abandoned_uploads() -> None:
@@ -53,11 +55,12 @@ async def lifespan(app: FastAPI):
     await init_db()
     await fail_interrupted_jobs()
     await discard_abandoned_uploads()
-    task = asyncio.create_task(cleanup_loop())
+    tasks = [asyncio.create_task(cleanup_loop()), asyncio.create_task(z_lib.keep_warm())]
     yield
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
+    for task in tasks:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(lifespan=lifespan)
@@ -68,16 +71,25 @@ templates = Jinja2Templates(directory="app/templates")
 
 
 def render_job_card(request: Request, job: Job) -> str:
-    return templates.get_template("partials/job_card.html").render({
-        "request": request,
-        "job_id": job.id,
-        "filename": job.filename,
-        "status": job.status,
-        "error": job.error,
-        "title": job.title,
-        "author": job.author,
-        "cover": job.cover,
-    })
+    return templates.get_template("partials/job_card.html").render(
+        {
+            "request": request,
+            "job_id": job.id,
+            "filename": job.filename,
+            "status": job.status,
+            "error": job.error,
+            "title": job.title,
+            "author": job.author,
+            "cover": job.cover,
+            "downloadable": bool(job.tmp_path and Path(job.tmp_path).exists()),
+        }
+    )
+
+
+def inspect_file(path: Path, fallback_title: str) -> tuple[str, str, str | None]:
+    file_type, _ = FileTypeDetector.detect_file_type(path)
+    title, author = probe_metadata(path, file_type, fallback_title=fallback_title)
+    return title, author, extract_cover(path, file_type)
 
 
 async def process_file_job(job_id: str) -> None:
@@ -86,6 +98,7 @@ async def process_file_job(job_id: str) -> None:
         return
 
     tmp_path = Path(job.tmp_path)
+    converted_path = None
     try:
         await job_queue.update(job_id, "processing")
 
@@ -94,7 +107,6 @@ async def process_file_job(job_id: str) -> None:
             await job_queue.update(job_id, "failed", f"Invalid file type: {file_type}")
             return
 
-        converted_path = None
         if file_type in ["epub", "pdf"]:
             outgoing, outgoing_type = tmp_path, file_type
         else:
@@ -109,7 +121,6 @@ async def process_file_job(job_id: str) -> None:
             apply_metadata, outgoing, outgoing_type, job.title or "", job.author or ""
         )
 
-        sent_at = datetime.now(UTC)
         await job_queue.update(job_id, "sending")
         await send_to_kindle(
             outgoing,
@@ -118,21 +129,15 @@ async def process_file_job(job_id: str) -> None:
             title=job.title,
             author=job.author,
         )
-        if converted_path:
-            converted_path.unlink(missing_ok=True)
-
-        await job_queue.update(job_id, "checking")
-        problem = await watch_for_problem(sent_at)
-        if problem:
-            await job_queue.update(job_id, "failed", f"Amazon: {problem}")
-        else:
-            await job_queue.update(job_id, "sent")
+        await job_queue.update(job_id, "sent")
 
     except Exception as e:
         await job_queue.update(job_id, "failed", str(e))
 
     finally:
         tmp_path.unlink(missing_ok=True)
+        if converted_path:
+            converted_path.unlink(missing_ok=True)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -145,25 +150,36 @@ async def index(request: Request):
             "default_kindle": settings.kindle_address,
             "max_size": settings.max_attachment_mb,
             "languages": library.LANGUAGES,
+            "sources": library.SOURCES,
         },
     )
 
 
 @app.get("/search", response_class=HTMLResponse)
-async def search_library(request: Request, q: str = "", lang: str = ""):
+async def search_library(request: Request, q: str = "", lang: str = "", source: str = ""):
     if lang not in library.LANGUAGES:
         lang = ""
+    if source not in library.SOURCES:
+        source = ""
 
     try:
-        results = await library.search(q, language=lang)
+        results = await library.search(q, language=lang, source=source)
         error = None
-    except Exception:
-        results, error = [], "Search is unavailable right now."
+    except Exception as exc:
+        logger.exception("Library search failed (source=%r)", source)
+        detail = str(exc) if source == "zlib" and str(exc) else None
+        results, error = [], detail or "Search is unavailable right now."
 
     return templates.TemplateResponse(
         request=request,
         name="partials/search_results.html",
-        context={"request": request, "results": results, "query": q.strip(), "error": error},
+        context={
+            "request": request,
+            "results": results,
+            "query": q.strip(),
+            "error": error,
+            "sources": library.SOURCES,
+        },
     )
 
 
@@ -178,22 +194,23 @@ async def download_from_library(
     try:
         url, title, catalogue_author = await library.resolve(source, ref, book_format)
     except Exception as exc:
-        return HTMLResponse(f"<div class='job-card__error'>{exc}</div>")
+        return HTMLResponse(f"<div class='job-card__error'>{html.escape(str(exc))}</div>")
 
     filename = f"{slugify(title)}.{book_format}"
     job = await job_queue.add(filename, status="review", kindle_address=kindle_address)
     tmp_path = Path(tempfile.gettempdir()) / f"{job.id}_{filename}"
 
     try:
-        await library.download(url, tmp_path)
+        if source == "zlib":
+            await library.download_zlib(url, tmp_path)
+        else:
+            await library.download(url, tmp_path)
     except Exception as exc:
         tmp_path.unlink(missing_ok=True)
         await job_queue.update(job.id, "failed", str(exc))
         return render_job_card(request, await job_queue.get(job.id))
 
-    file_type, _ = FileTypeDetector.detect_file_type(tmp_path)
-    probed_title, author = probe_metadata(tmp_path, file_type, fallback_title=title)
-    cover = extract_cover(tmp_path, file_type)
+    probed_title, author, cover = await asyncio.to_thread(inspect_file, tmp_path, title)
     await job_queue.set(
         job.id,
         tmp_path=str(tmp_path),
@@ -235,11 +252,9 @@ async def upload(
                 job.id, "failed", f"File exceeds {settings.max_attachment_mb}MB limit"
             )
         else:
-            file_type, _ = FileTypeDetector.detect_file_type(tmp_path)
-            title, author = probe_metadata(
-                tmp_path, file_type, fallback_title=Path(safe_name).stem
+            title, author, cover = await asyncio.to_thread(
+                inspect_file, tmp_path, Path(safe_name).stem
             )
-            cover = extract_cover(tmp_path, file_type)
             await job_queue.set(
                 job.id, tmp_path=str(tmp_path), title=title, author=author, cover=cover
             )
@@ -264,6 +279,24 @@ async def send_job(
     await job_queue.set(job_id, title=title, author=author, status="pending")
     background_tasks.add_task(process_file_job, job_id)
     return render_job_card(request, await job_queue.get(job_id))
+
+
+@app.get("/jobs/{job_id}/file")
+async def download_job_file(job_id: str):
+    job = await job_queue.get(job_id)
+    if not job or not job.tmp_path or not Path(job.tmp_path).exists():
+        raise HTTPException(status_code=404, detail="File is no longer on the server.")
+    return FileResponse(job.tmp_path, filename=job.filename)
+
+
+@app.delete("/jobs/{job_id}", response_class=HTMLResponse)
+async def delete_job(job_id: str):
+    job = await job_queue.get(job_id)
+    if job:
+        if job.tmp_path and job.status not in ACTIVE_STATUSES:
+            Path(job.tmp_path).unlink(missing_ok=True)
+        await job_queue.remove(job_id)
+    return HTMLResponse("")
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)

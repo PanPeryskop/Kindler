@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.config import settings
+from app.services import z_lib
 
 GUTENDEX_URL = "https://gutendex.com/books"
 WOLNELEKTURY_CATALOG_URL = "https://wolnelektury.pl/api/books/"
@@ -22,14 +23,16 @@ STANDARDEBOOKS_SOURCE_PARAM = "?source=feed"
 
 REJECTED_CONTENT_TYPES = ("text/html", "application/xhtml+xml")
 
-ALLOWED_DOWNLOAD_HOSTS = frozenset({
-    "wolnelektury.pl",
-    "www.wolnelektury.pl",
-    "gutenberg.org",
-    "www.gutenberg.org",
-    "standardebooks.org",
-    "www.standardebooks.org",
-})
+ALLOWED_DOWNLOAD_HOSTS = frozenset(
+    {
+        "wolnelektury.pl",
+        "www.wolnelektury.pl",
+        "gutenberg.org",
+        "www.gutenberg.org",
+        "standardebooks.org",
+        "www.standardebooks.org",
+    }
+)
 
 LANGUAGES = {
     "": "All",
@@ -43,6 +46,14 @@ LANGUAGES = {
 }
 
 SOURCE_LANGUAGE = {"wolnelektury": "pl", "standardebooks": "en"}
+
+SOURCES = {
+    "": "All",
+    "gutenberg": "Gutenberg",
+    "wolnelektury": "Wolne Lektury",
+    "standardebooks": "Standard Ebooks",
+    "zlib": "Z-Lib",
+}
 
 GUTENBERG_FORMATS = {
     "application/epub+zip": "epub",
@@ -230,24 +241,51 @@ async def _search_wolnelektury(
     return [item for item in details if isinstance(item, SearchResult)]
 
 
-def _source_matches_language(source: str, language: str) -> bool:
-    return not language or SOURCE_LANGUAGE.get(source) == language
+async def _search_zlib(query: str, limit: int) -> list[SearchResult]:
+    books = await z_lib.search(query, limit)
+    return [
+        SearchResult(
+            source="zlib",
+            ref=book["ref"],
+            title=book["title"],
+            author=book["author"],
+            cover_url=book["cover_url"],
+            formats={book["extension"]: book["extension"]},
+            language=book["language"],
+        )
+        for book in books
+    ]
 
 
-async def search(query: str, language: str = "", limit: int | None = None) -> list[SearchResult]:
+def _is_enabled(name: str, source: str, language: str) -> bool:
+    if source:
+        return name == source
+    return name != "zlib" and (not language or SOURCE_LANGUAGE.get(name, language) == language)
+
+
+async def search(
+    query: str, language: str = "", source: str = "", limit: int | None = None
+) -> list[SearchResult]:
     query = query.strip()
     if not query:
         return []
 
     limit = limit or settings.search_limit
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
-        searches = [_search_gutenberg(client, query, limit, language)]
-        if _source_matches_language("wolnelektury", language):
+        searches = []
+        if _is_enabled("gutenberg", source, language):
+            searches.append(_search_gutenberg(client, query, limit, language))
+        if _is_enabled("wolnelektury", source, language):
             searches.append(_search_wolnelektury(client, query, limit))
-        if _source_matches_language("standardebooks", language):
+        if _is_enabled("standardebooks", source, language):
             searches.append(_search_standardebooks(client, query, limit))
+        if _is_enabled("zlib", source, language):
+            searches.append(_search_zlib(query, limit))
 
         groups = await asyncio.gather(*searches, return_exceptions=True)
+
+    if groups and source and isinstance(groups[0], Exception):
+        raise groups[0]
 
     results: list[SearchResult] = []
     for group in groups:
@@ -259,6 +297,9 @@ async def search(query: str, language: str = "", limit: int | None = None) -> li
 async def resolve(source: str, ref: str, book_format: str) -> tuple[str, str, str]:
     if not SAFE_REF.match(ref):
         raise ValueError("Invalid book reference.")
+
+    if source == "zlib":
+        return await z_lib.resolve(ref, book_format)
 
     if source == "standardebooks":
         parts = ref.split("_")
@@ -324,8 +365,12 @@ async def download(url: str, destination: Path, max_bytes: int | None = None) ->
                         out.write(chunk)
 
                 if too_large:
-                    destination.unlink(missing_ok=True)
+                    await asyncio.to_thread(destination.unlink, missing_ok=True)
                     raise ValueError(f"Download exceeds the {settings.max_attachment_mb}MB limit.")
                 return
 
     raise ValueError("Download blocked: too many redirects.")
+
+
+async def download_zlib(url: str, destination: Path) -> None:
+    await z_lib.download(url, destination, settings.max_attachment_bytes)

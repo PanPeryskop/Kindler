@@ -1,15 +1,14 @@
+import logging
 from pathlib import Path
 
 import fitz
 from ebooklib import epub
 from slugify import slugify
 
+logger = logging.getLogger(__name__)
+
 
 def extract_epub_metadata(epub_path: Path) -> tuple[str, str, str]:
-    """Return (kindle_filename, title, author) for an EPUB.
-
-    Falls back to the file stem if metadata can't be read.
-    """
     try:
         book = epub.read_epub(str(epub_path))
         titles = book.get_metadata("DC", "title")
@@ -41,7 +40,7 @@ def read_raw_metadata(path: Path, file_type: str) -> tuple[str, str]:
             doc.close()
             return (info.get("title") or ""), (info.get("author") or "")
     except Exception:
-        pass
+        logger.warning("Could not read metadata from %s", path.name, exc_info=True)
     return "", ""
 
 
@@ -90,4 +89,4 @@ def apply_metadata(path: Path, file_type: str, title: str, author: str) -> None:
         else:
             _write_pdf_metadata(path, new_title, new_author)
     except Exception:
-        pass
+        logger.warning("Could not write metadata to %s", path.name, exc_info=True)

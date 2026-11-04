@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 import httpx
@@ -170,6 +169,68 @@ async def test_language_filter_keeps_only_matching_sources(monkeypatch):
     assert "wolnelektury" not in {r.source for r in english}
 
 
+async def test_source_switch_queries_only_the_chosen_source(monkeypatch):
+    calls: list[str] = []
+    patch_client(monkeypatch, fake_api(calls))
+
+    results = await library.search("dracula", source="standardebooks")
+
+    assert {r.source for r in results} == {"standardebooks"}
+    assert all("gutendex" not in c and "wolnelektury" not in c for c in calls)
+
+
+async def test_source_switch_overrides_the_language_filter(monkeypatch):
+    patch_client(monkeypatch, fake_api())
+
+    results = await library.search("quo vadis", language="en", source="wolnelektury")
+
+    assert {r.source for r in results} == {"wolnelektury"}
+
+
+async def test_zlib_search_uses_zlibrary_only_when_selected(monkeypatch):
+    async def fake_search(query, limit):
+        assert (query, limit) == ("dracula", 10)
+        return [
+            {
+                "ref": "123",
+                "title": "Dracula",
+                "author": "Bram Stoker",
+                "cover_url": None,
+                "extension": "epub",
+                "language": "en",
+            }
+        ]
+
+    monkeypatch.setattr(library.z_lib, "search", fake_search)
+
+    results = await library.search("dracula", source="zlib")
+
+    assert [(book.source, book.ref, book.formats) for book in results] == [
+        ("zlib", "123", {"epub": "epub"})
+    ]
+
+
+async def test_zlib_is_not_queried_with_other_sources(monkeypatch):
+    patch_client(monkeypatch, fake_api())
+
+    async def unexpected_zlib_search(*args):
+        raise AssertionError("z-lib search must not run unless selected")
+
+    monkeypatch.setattr(library.z_lib, "search", unexpected_zlib_search)
+
+    results = await library.search("quo vadis", language="pl")
+
+    assert {r.source for r in results} == {"wolnelektury", "gutenberg"}
+
+
+async def test_unknown_source_yields_nothing(monkeypatch):
+    calls: list[str] = []
+    patch_client(monkeypatch, fake_api(calls))
+
+    assert await library.search("dracula", source="libgen") == []
+    assert calls == []
+
+
 async def test_language_is_passed_to_gutendex(monkeypatch):
     calls: list[str] = []
     patch_client(monkeypatch, fake_api(calls))
@@ -336,9 +397,7 @@ async def test_download_blocks_redirect_off_the_allowlist(tmp_path: Path, monkey
 async def test_download_follows_allowed_redirect(tmp_path: Path, monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         if "redirect" in str(request.url):
-            return httpx.Response(
-                302, headers={"location": "https://www.gutenberg.org/final.epub"}
-            )
+            return httpx.Response(302, headers={"location": "https://www.gutenberg.org/final.epub"})
         return httpx.Response(200, content=b"PK\x03\x04payload")
 
     patch_client(monkeypatch, httpx.MockTransport(handler))

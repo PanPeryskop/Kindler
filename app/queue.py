@@ -5,7 +5,7 @@ from sqlmodel import select
 
 from app.db import Job, session_factory, utcnow
 
-ACTIVE_STATUSES = ("pending", "processing", "converting", "sending", "checking")
+ACTIVE_STATUSES = ("pending", "processing", "converting", "sending")
 
 
 class JobQueue:
@@ -32,6 +32,14 @@ class JobQueue:
 
     async def update(self, job_id: str, status: str, error: str | None = None) -> None:
         await self.set(job_id, status=status, error=error)
+
+    async def remove(self, job_id: str) -> None:
+        async with session_factory() as session:
+            job = await session.get(Job, job_id)
+            if not job:
+                return
+            await session.delete(job)
+            await session.commit()
 
     async def with_status(self, *statuses: str) -> list[Job]:
         async with session_factory() as session:

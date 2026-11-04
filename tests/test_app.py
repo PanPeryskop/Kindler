@@ -76,7 +76,7 @@ async def test_filename_with_traversal_stays_in_temp_dir(tmp_path: Path):
 async def test_search_endpoint_renders_results(monkeypatch):
     from app.services import library
 
-    async def fake_search(query, language="", limit=None):
+    async def fake_search(query, language="", source="", limit=None):
         return [
             library.SearchResult(
                 source="wolnelektury",
@@ -105,7 +105,7 @@ async def test_search_endpoint_passes_language_and_rejects_bogus_codes(monkeypat
 
     seen: list[str] = []
 
-    async def fake_search(query, language="", limit=None):
+    async def fake_search(query, language="", source="", limit=None):
         seen.append(language)
         return []
 
@@ -118,10 +118,39 @@ async def test_search_endpoint_passes_language_and_rejects_bogus_codes(monkeypat
     assert seen == ["pl", ""]
 
 
+async def test_search_endpoint_passes_source_and_rejects_bogus_ones(monkeypatch):
+    from app.services import library
+
+    seen: list[str] = []
+
+    async def fake_search(query, language="", source="", limit=None):
+        seen.append(source)
+        return []
+
+    monkeypatch.setattr(library, "search", fake_search)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.get("/search", params={"q": "x", "source": "gutenberg"})
+        await client.get("/search", params={"q": "x", "source": "libgen"})
+
+    assert seen == ["gutenberg", ""]
+
+
+async def test_index_renders_a_switch_option_per_source():
+    from app.services import library
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/")
+
+    for code in library.SOURCES:
+        assert f'name="source" value="{code}"' in response.text
+
+
 async def test_search_endpoint_reports_empty_query(monkeypatch):
     from app.services import library
 
-    async def fake_search(query, language="", limit=None):
+    async def fake_search(query, language="", source="", limit=None):
         return []
 
     monkeypatch.setattr(library, "search", fake_search)
@@ -257,3 +286,88 @@ async def test_job_status_endpoint_returns_card(tmp_path: Path):
     assert job.id in response.text
     assert "Job not found" in missing.text
     Path(job.tmp_path).unlink(missing_ok=True)
+
+
+async def make_review_job(tmp_path: Path, status: str = "review") -> tuple[str, Path]:
+    job = await job_queue.add("book.epub", status=status, kindle_address="k@kindle.com")
+    stored = tmp_path / f"{job.id}_book.epub"
+    make_epub(stored, "Dracula", "Bram Stoker")
+    await job_queue.set(job.id, tmp_path=str(stored))
+    return job.id, stored
+
+
+async def test_queue_card_offers_download_and_delete(tmp_path: Path):
+    job_id, _ = await make_review_job(tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/jobs/{job_id}")
+
+    assert f'href="/jobs/{job_id}/file"' in response.text
+    assert f'hx-delete="/jobs/{job_id}"' in response.text
+
+
+async def test_download_returns_the_stored_file(tmp_path: Path):
+    job_id, stored = await make_review_job(tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/jobs/{job_id}/file")
+
+    assert response.status_code == 200
+    assert response.content == stored.read_bytes()
+    assert "book.epub" in response.headers["content-disposition"]
+
+
+async def test_download_is_404_once_the_file_is_gone(tmp_path: Path):
+    job_id, stored = await make_review_job(tmp_path)
+    stored.unlink()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/jobs/{job_id}/file")
+
+    assert response.status_code == 404
+
+
+async def test_card_hides_download_when_the_file_is_gone(tmp_path: Path):
+    job_id, stored = await make_review_job(tmp_path)
+    stored.unlink()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/jobs/{job_id}")
+
+    assert f"/jobs/{job_id}/file" not in response.text
+    assert f'hx-delete="/jobs/{job_id}"' in response.text
+
+
+async def test_delete_drops_the_job_and_its_file(tmp_path: Path):
+    job_id, stored = await make_review_job(tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.delete(f"/jobs/{job_id}")
+
+    assert response.text == ""
+    assert await job_queue.get(job_id) is None
+    assert not stored.exists()
+
+
+async def test_delete_of_an_active_job_leaves_the_file_to_the_worker(tmp_path: Path):
+    job_id, stored = await make_review_job(tmp_path, status="sending")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.delete(f"/jobs/{job_id}")
+
+    assert await job_queue.get(job_id) is None
+    assert stored.exists()
+
+
+async def test_deleting_a_missing_job_is_a_no_op():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.delete("/jobs/doesnotexist")
+
+    assert response.status_code == 200

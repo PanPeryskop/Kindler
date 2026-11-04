@@ -1,3 +1,4 @@
+import asyncio
 import mimetypes
 from email.message import EmailMessage
 from pathlib import Path
@@ -17,10 +18,10 @@ async def send_to_kindle(
     title: str | None = None,
     author: str | None = None,
 ) -> None:
-    if path.stat().st_size > settings.max_attachment_bytes:
+    size = path.stat().st_size
+    if size > settings.max_attachment_bytes:
         raise ValueError(
-            f"File size is {path.stat().st_size / 1_048_576:.1f} MB, "
-            f"limit is {settings.max_attachment_mb} MB."
+            f"File size is {size / 1_048_576:.1f} MB, limit is {settings.max_attachment_mb} MB."
         )
 
     title = title or ""
@@ -31,7 +32,9 @@ async def send_to_kindle(
     email_subject = "convert" if convert else ""
 
     if path.suffix.lower() == ".epub":
-        extracted_name, extracted_title, extracted_author = extract_epub_metadata(path)
+        extracted_name, extracted_title, extracted_author = await asyncio.to_thread(
+            extract_epub_metadata, path
+        )
         if title or author:
             title = title or extracted_title
             author = author or extracted_author
@@ -61,9 +64,9 @@ async def send_to_kindle(
 
     ctype, _ = mimetypes.guess_type(path.name)
     maintype, subtype = (ctype or "application/octet-stream").split("/", 1)
-    
+
     msg.add_attachment(
-        path.read_bytes(),
+        await asyncio.to_thread(path.read_bytes),
         maintype=maintype,
         subtype=subtype,
         filename=attachment_name,
@@ -74,7 +77,7 @@ async def send_to_kindle(
         "port": settings.email_port,
         "start_tls": settings.email_use_tls,
     }
-    
+
     if settings.email_host_user and settings.email_host_password:
         send_kwargs["username"] = settings.email_host_user
         send_kwargs["password"] = settings.email_host_password

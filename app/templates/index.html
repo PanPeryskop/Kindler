@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Send to Kindle</title>
   <meta name="description"
-    content="Self-hosted file and article converter for Kindle devices. Upload files or paste URLs to send directly to your reader.">
+    content="Self-hosted file converter for Kindle devices. Upload files or pick a book from a catalogue to send it directly to your reader.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📚</text></svg>">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -80,10 +80,11 @@
 
       <div class="main-panel">
         <form id="search-form" hx-get="/search" hx-target="#search-results" hx-swap="innerHTML"
-          hx-indicator="#search-form">
+          hx-indicator="#search-form"
+          hx-trigger="submit, change from:#search-lang, change from:.source-switch">
           <div class="search-bar">
             <input type="search" class="field__input" name="q" id="search-input"
-              placeholder="Search public domain catalogues&hellip;" autocomplete="off">
+              placeholder="Search catalogues&hellip;" autocomplete="off">
             <select class="field__input search-bar__lang" name="lang" id="search-lang">
               {% for code, label in languages.items() %}
               <option value="{{ code }}">{{ label }}</option>
@@ -95,8 +96,16 @@
               <span class="htmx-indicator"><span class="spinner"></span></span>
             </button>
           </div>
-          <span class="field__hint">Wolne Lektury &middot; Project Gutenberg &middot; Standard Ebooks
-            &mdash; any format, converted if needed</span>
+          <div class="source-switch">
+            {% for code, label in sources.items() %}
+            <label class="source-switch__option">
+              <input type="radio" name="source" value="{{ code }}" aria-label="{{ label }}"
+                {% if not code %}checked{% endif %}>
+              <span>{{ label }}</span>
+            </label>
+            {% endfor %}
+          </div>
+          <span class="field__hint">Any format &mdash; converted if needed</span>
         </form>
 
         <div class="search-results" id="search-results"></div>
@@ -176,7 +185,6 @@
 
     document.body.addEventListener('htmx:afterSwap', () => {
       if (window.lucide) lucide.createIcons();
-      updateJobCount();
     });
 
     function syncKindle(targetId) {
@@ -247,6 +255,9 @@
       const counter = document.getElementById('jobs-count');
       if (counter) counter.textContent = count;
     }
+
+    new MutationObserver(updateJobCount)
+      .observe(document.getElementById('jobs-list'), { childList: true });
 
     document.addEventListener('DOMContentLoaded', updateJobCount);
   </script>

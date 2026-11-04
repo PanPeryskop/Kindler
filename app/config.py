@@ -10,15 +10,17 @@ class Settings(BaseSettings):
     email_host_user: str
     email_host_password: str
 
-    imap_host: str = "imap.gmail.com"
-    imap_port: int = 993
-
     test_email: str | None = None
     kindle_address: str
     max_attachment_mb: int = 18
     db_path: str = "kindler.db"
     search_limit: int = 10
     catalog_ttl_minutes: int = 360
+    zlib_email: str | None = None
+    zlib_password: str | None = None
+    zlib_mirror: str = "https://z-lib.sk"
+    zlib_cookies_file: str = "cookies.txt"
+    zlib_tor_proxy: str | None = None
 
     @property
     def max_attachment_bytes(self) -> int:

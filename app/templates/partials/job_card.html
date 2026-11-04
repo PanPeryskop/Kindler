@@ -1,9 +1,24 @@
+{% macro actions() %}
+<span class="job-card__actions">
+  {% if downloadable %}
+  <a class="job-card__action" href="/jobs/{{ job_id }}/file" download
+    title="Download to this device" aria-label="Download to this device">
+    <i data-lucide="download" style="width:14px;height:14px;"></i>
+  </a>
+  {% endif %}
+  <button type="button" class="job-card__action job-card__action--danger"
+    hx-delete="/jobs/{{ job_id }}" hx-target="#job-{{ job_id }}" hx-swap="outerHTML"
+    title="Remove from queue" aria-label="Remove from queue">
+    <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
+  </button>
+</span>
+{% endmacro %}
+
 {% set status_map = {
 'pending': {'label': 'Queued', 'class': 'status--pending', 'progress': '8', 'active': true},
 'processing': {'label': 'Detecting', 'class': 'status--processing', 'progress': '20', 'active': true},
 'converting': {'label': 'Converting', 'class': 'status--processing', 'progress': '50', 'active': true},
 'sending': {'label': 'Sending', 'class': 'status--processing', 'progress': '80', 'active': true},
-'checking': {'label': 'Checking', 'class': 'status--processing', 'progress': '95', 'active': true},
 'sent': {'label': 'Sent', 'class': 'status--success', 'progress': '100', 'active': false},
 'failed': {'label': 'Failed', 'class': 'status--failed', 'progress': '100', 'active': false},
 } %}
@@ -14,6 +29,7 @@
   <div class="job-card__header">
     <span class="job-card__name" title="{{ filename }}">{{ filename }}</span>
     <span class="job-card__status status--review">Review</span>
+    {{ actions() }}
   </div>
   <div class="review">
     {% if cover %}<img class="review__cover" src="{{ cover }}" alt="">{% endif %}
@@ -37,6 +53,7 @@
   <div class="job-card__header">
     <span class="job-card__name" title="{{ filename }}">{{ filename }}</span>
     <span class="job-card__status {{ info.class }}">{{ info.label }}</span>
+    {{ actions() }}
   </div>
 
   <div class="progress">
