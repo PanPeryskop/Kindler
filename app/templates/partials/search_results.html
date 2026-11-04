@@ -1,6 +1,6 @@
 {% if error %}
 <div class="job-card__error">{{ error }}</div>
-{% elif query and not results %}
+{% elif query and not results and not appending and not next_query %}
 <div class="search-empty">Nothing found for &ldquo;{{ query }}&rdquo;.</div>
 {% else %}
 {% for result in results %}
@@ -32,4 +32,11 @@
   </div>
 </div>
 {% endfor %}
+{% endif %}
+{% if next_query %}
+<button type="button" class="btn btn--secondary search-more" hx-get="/search?{{ next_query }}"
+  hx-target="this" hx-swap="outerHTML" hx-indicator="this">
+  <span class="btn__label">Load more</span>
+  <span class="htmx-indicator"><span class="spinner"></span></span>
+</button>
 {% endif %}

@@ -934,6 +934,13 @@ summary.job-card__action::-webkit-details-marker {
   margin-top: 0;
 }
 
+.search-more {
+  align-self: center;
+  width: auto;
+  margin-top: 0.5rem;
+  padding: 0.6rem 1.25rem;
+}
+
 .search-empty {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.75rem;
@@ -1226,6 +1233,14 @@ summary.job-card__action::-webkit-details-marker {
 
   .tab-panel {
     padding: var(--space-md);
+  }
+
+  .search-bar {
+    flex-wrap: wrap;
+  }
+
+  .search-bar #search-input {
+    flex-basis: 100%;
   }
 
   .dropzone {

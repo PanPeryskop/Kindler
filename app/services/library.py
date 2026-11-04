@@ -55,6 +55,15 @@ SOURCES = {
     "zlib": "Z-Lib",
 }
 
+FORMATS = {
+    "": "Any format",
+    "epub": "EPUB",
+    "pdf": "PDF",
+    "mobi": "MOBI",
+    "azw3": "AZW3",
+    "fb2": "FB2",
+}
+
 GUTENBERG_FORMATS = {
     "application/epub+zip": "epub",
     "application/x-mobipocket-ebook": "mobi",
@@ -81,6 +90,12 @@ class SearchResult:
     cover_url: str | None
     formats: dict[str, str]
     language: str = ""
+
+
+@dataclass
+class SearchPage:
+    results: list[SearchResult]
+    next_cursor: tuple[int, int] | None = None
 
 
 def host_allowed(url: str) -> bool:
@@ -241,9 +256,11 @@ async def _search_wolnelektury(
     return [item for item in details if isinstance(item, SearchResult)]
 
 
-async def _search_zlib(query: str, limit: int) -> list[SearchResult]:
-    books = await z_lib.search(query, limit)
-    return [
+async def _search_zlib(
+    query: str, limit: int, language: str, book_format: str, cursor: tuple[int, int]
+) -> SearchPage:
+    books, next_cursor = await z_lib.search(query, limit, language, book_format, cursor)
+    results = [
         SearchResult(
             source="zlib",
             ref=book["ref"],
@@ -255,22 +272,33 @@ async def _search_zlib(query: str, limit: int) -> list[SearchResult]:
         )
         for book in books
     ]
+    return SearchPage(results, next_cursor)
 
 
 def _is_enabled(name: str, source: str, language: str) -> bool:
     if source:
         return name == source
-    return name != "zlib" and (not language or SOURCE_LANGUAGE.get(name, language) == language)
+    return not language or SOURCE_LANGUAGE.get(name, language) == language
 
 
 async def search(
-    query: str, language: str = "", source: str = "", limit: int | None = None
-) -> list[SearchResult]:
+    query: str,
+    language: str = "",
+    source: str = "",
+    book_format: str = "",
+    cursor: tuple[int, int] | None = None,
+    limit: int | None = None,
+) -> SearchPage:
     query = query.strip()
     if not query:
-        return []
+        return SearchPage([])
 
     limit = limit or settings.search_limit
+    if source == "zlib":
+        return await _search_zlib(query, limit, language, book_format, cursor or (1, 0))
+    if cursor:
+        return SearchPage([])
+
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
         searches = []
         if _is_enabled("gutenberg", source, language):
@@ -279,8 +307,6 @@ async def search(
             searches.append(_search_wolnelektury(client, query, limit))
         if _is_enabled("standardebooks", source, language):
             searches.append(_search_standardebooks(client, query, limit))
-        if _is_enabled("zlib", source, language):
-            searches.append(_search_zlib(query, limit))
 
         groups = await asyncio.gather(*searches, return_exceptions=True)
 
@@ -291,7 +317,9 @@ async def search(
     for group in groups:
         if isinstance(group, list):
             results.extend(group)
-    return results
+    if book_format:
+        results = [result for result in results if book_format in result.formats]
+    return SearchPage(results)
 
 
 async def resolve(source: str, ref: str, book_format: str) -> tuple[str, str, str]:

@@ -6,6 +6,7 @@ import tempfile
 from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
@@ -155,20 +156,44 @@ async def index(request: Request):
             "max_size": settings.max_attachment_mb,
             "languages": library.LANGUAGES,
             "sources": library.SOURCES,
+            "formats": library.FORMATS,
         },
     )
 
 
 @app.get("/search", response_class=HTMLResponse)
-async def search_library(request: Request, q: str = "", lang: str = "", source: str = ""):
-    if lang not in library.LANGUAGES:
-        lang = ""
-    if source not in library.SOURCES:
-        source = ""
+async def search_library(
+    request: Request,
+    q: str = "",
+    lang: str = "",
+    source: str = "",
+    fmt: str = "",
+    page: int = 0,
+    offset: int = 0,
+):
+    lang = lang if lang in library.LANGUAGES else ""
+    source = source if source in library.SOURCES else ""
+    fmt = fmt if fmt in library.FORMATS else ""
+    cursor = (page, max(offset, 0)) if page >= 1 else None
 
+    next_query = None
     try:
-        results = await library.search(q, language=lang, source=source)
-        error = None
+        found = await library.search(
+            q, language=lang, source=source, book_format=fmt, cursor=cursor
+        )
+        results, error = found.results, None
+        if found.next_cursor:
+            next_page, next_offset = found.next_cursor
+            next_query = urlencode(
+                {
+                    "q": q.strip(),
+                    "lang": lang,
+                    "source": source,
+                    "fmt": fmt,
+                    "page": next_page,
+                    "offset": next_offset,
+                }
+            )
     except Exception as exc:
         logger.exception("Library search failed (source=%r)", source)
         detail = str(exc) if source == "zlib" and str(exc) else None
@@ -183,6 +208,8 @@ async def search_library(request: Request, q: str = "", lang: str = "", source: 
             "query": q.strip(),
             "error": error,
             "sources": library.SOURCES,
+            "appending": cursor is not None,
+            "next_query": next_query,
         },
     )
 

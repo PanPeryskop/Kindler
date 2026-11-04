@@ -3,24 +3,35 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
+import re
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from http.cookiejar import LoadError, MozillaCookieJar
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urlencode, urljoin, urlparse
 
-import zlibrary
-import zlibrary.abs as zlib_abs
 from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.exceptions import RequestException
-from zlibrary.libasync import ZLIB_TOR_DOMAIN
-from zlibrary.profile import ZlibProfile
 
 from app.config import settings
 
+ZLIB_TOR_DOMAIN = "http://bookszlibb74ugqojhzhg2a63w5i2atv5bqarulgczawnbmsb6s6qead.onion"
+ZLIB_LANGUAGES = {
+    "pl": "polish",
+    "en": "english",
+    "de": "german",
+    "fr": "french",
+    "es": "spanish",
+    "it": "italian",
+    "ru": "russian",
+}
+PAGES_TOTAL = re.compile(r"pagesTotal:\s*(\d+)")
+PAGE_CACHE_SECONDS = 600
+PAGE_CACHE_SIZE = 32
+MAX_PAGES_PER_SEARCH = 3
 ZLIBRARY_TIMEOUT = 60
 TOR_TIMEOUT = 120
 CHALLENGE_TIMEOUT_SECONDS = 45
@@ -43,16 +54,10 @@ DEFAULT_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
 )
 
-
-def _discard(*_args: Any, **_kwargs: Any) -> Any:
-    return open(os.devnull, "w", encoding="utf-8")
-
-
-zlib_abs.open = _discard  # type: ignore[attr-defined]
-
 _session: _ZSession | None = None
 _session_lock = asyncio.Lock()
 _retiring: set[asyncio.Task] = set()
+_pages: OrderedDict[str, tuple[float, list[dict[str, Any]], int]] = OrderedDict()
 logger = logging.getLogger(__name__)
 
 
@@ -64,7 +69,6 @@ class ZLibraryBlocked(RuntimeError):
 class _ZSession:
     http: AsyncSession
     mirror: str
-    client: Any
 
 
 def _use_tor() -> bool:
@@ -220,18 +224,6 @@ async def _login(http: AsyncSession, mirror: str) -> None:
         raise RuntimeError("Z-Lib login failed: check ZLIB_EMAIL and ZLIB_PASSWORD.")
 
 
-def _new_client(http: AsyncSession, mirror: str) -> Any:
-    async def fetch(url: str) -> str:
-        return await _fetch(url)
-
-    client = zlibrary.AsyncZlib()
-    client.mirror = mirror
-    client.cookies = dict(http.cookies.items())
-    client._r = fetch
-    client.profile = ZlibProfile(fetch, client.cookies, mirror, mirror)
-    return client
-
-
 async def _open_session() -> _ZSession:
     mirror = _mirror()
     cookies = _load_cookies(mirror)
@@ -252,7 +244,7 @@ async def _open_session() -> _ZSession:
         await http.close()
         raise
 
-    return _ZSession(http=http, mirror=mirror, client=_new_client(http, mirror))
+    return _ZSession(http=http, mirror=mirror)
 
 
 async def _get_session() -> _ZSession:
@@ -313,20 +305,6 @@ async def keep_warm() -> None:
         await asyncio.sleep(delay)
 
 
-def _author(book: dict[str, Any]) -> str:
-    authors = book.get("authors", [])
-    if isinstance(authors, list):
-        names = [
-            item.get("author", "") if isinstance(item, dict) else str(item) for item in authors
-        ]
-        return ", ".join(name for name in names if name) or "Unknown Author"
-    return str(authors or "Unknown Author")
-
-
-def _extension(book: dict[str, Any]) -> str:
-    return str(book.get("extension", "")).strip().lower().lstrip(".")
-
-
 def _book_code(url: str) -> str:
     parts = urlparse(url).path.strip("/").split("/")
     return parts[1] if len(parts) > 1 and parts[0] == "book" else ""
@@ -341,31 +319,96 @@ def _cover_url(mirror: str, cover: str | None) -> str | None:
     return cover
 
 
-async def search(query: str, limit: int) -> list[dict[str, Any]]:
-    session = await _get_session()
-    paginator = await asyncio.wait_for(
-        session.client.search(q=query, count=min(max(limit, 1), 50)),
-        timeout=_timeout(),
-    )
-    books = await asyncio.wait_for(paginator.next(), timeout=_timeout())
+def _search_url(query: str, language: str, extension: str, page: int) -> str:
+    params = []
+    if language in ZLIB_LANGUAGES:
+        params.append(("languages[]", ZLIB_LANGUAGES[language]))
+    if extension:
+        params.append(("extensions[]", extension.upper()))
+    params.append(("page", str(page)))
+    return f"{_mirror()}/s/{quote(query, safe='')}?{urlencode(params)}"
 
-    results = []
-    for book in books[:limit]:
-        extension = _extension(book)
-        code = _book_code(str(book.get("url", "")))
+
+def _parse_search_page(html: str, mirror: str) -> tuple[list[dict[str, Any]], int]:
+    soup = BeautifulSoup(html, "lxml")
+    if soup.select_one(".notFound"):
+        return [], 0
+    if not soup.select_one("#searchResultBox"):
+        raise RuntimeError("Z-Lib returned an unexpected search page.")
+
+    books = []
+    for card in soup.select("#searchResultBox .book-item z-bookcard"):
+        code = _book_code(str(card.get("href", "")))
+        extension = str(card.get("extension", "")).strip().lower()
         if not code or not extension:
             continue
-        results.append(
+        title = card.select_one("[slot=title]")
+        author = card.select_one("[slot=author]")
+        cover = card.select_one("img")
+        authors = author.get_text().split(";") if author else []
+        books.append(
             {
                 "ref": code,
-                "title": str(book.get("name", "")).strip() or "Untitled",
-                "author": _author(book),
-                "cover_url": _cover_url(session.mirror, book.get("cover")),
+                "title": (title.get_text(strip=True) if title else "") or "Untitled",
+                "author": ", ".join(a.strip() for a in authors if a.strip()) or "Unknown Author",
+                "cover_url": _cover_url(mirror, str(cover.get("data-src", "")) if cover else None),
                 "extension": extension,
-                "language": str(book.get("language", "")).strip(),
+                "language": str(card.get("language", "")).strip(),
             }
         )
-    return results
+
+    match = PAGES_TOTAL.search(html)
+    return books, int(match.group(1)) if match else 1
+
+
+def _matches(book: dict[str, Any], language: str, extension: str) -> bool:
+    if extension and book["extension"] != extension:
+        return False
+    wanted = ZLIB_LANGUAGES.get(language)
+    return not wanted or book["language"].casefold() == wanted
+
+
+async def _search_page(
+    query: str, language: str, extension: str, page: int
+) -> tuple[list[dict[str, Any]], int]:
+    url = _search_url(query, language, extension, page)
+    cached = _pages.get(url)
+    if cached and time.monotonic() - cached[0] < PAGE_CACHE_SECONDS:
+        _pages.move_to_end(url)
+        return cached[1], cached[2]
+
+    html = await asyncio.wait_for(_fetch(url), timeout=_timeout())
+    books, total = _parse_search_page(html, _mirror())
+    books = [book for book in books if _matches(book, language, extension)]
+    _pages[url] = (time.monotonic(), books, total)
+    while len(_pages) > PAGE_CACHE_SIZE:
+        _pages.popitem(last=False)
+    return books, total
+
+
+async def search(
+    query: str,
+    limit: int,
+    language: str = "",
+    extension: str = "",
+    cursor: tuple[int, int] = (1, 0),
+) -> tuple[list[dict[str, Any]], tuple[int, int] | None]:
+    page, offset = cursor
+    books: list[dict[str, Any]] = []
+    for _ in range(MAX_PAGES_PER_SEARCH):
+        items, total = await _search_page(query, language, extension, page)
+        taken = items[offset : offset + limit - len(books)]
+        books.extend(taken)
+        offset += len(taken)
+
+        if len(books) >= limit and offset < len(items):
+            return books, (page, offset)
+        if page >= total:
+            return books, None
+        if len(books) >= limit:
+            return books, (page + 1, 0)
+        page, offset = page + 1, 0
+    return books, (page, 0)
 
 
 def _parse_book_page(html: str) -> tuple[str | None, str, str, str]:

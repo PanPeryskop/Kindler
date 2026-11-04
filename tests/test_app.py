@@ -76,18 +76,17 @@ async def test_filename_with_traversal_stays_in_temp_dir(tmp_path: Path):
 async def test_search_endpoint_renders_results(monkeypatch):
     from app.services import library
 
-    async def fake_search(query, language="", source="", limit=None):
-        return [
-            library.SearchResult(
-                source="wolnelektury",
-                ref="quo-vadis",
-                title="Quo vadis",
-                author="Henryk Sienkiewicz",
-                cover_url="https://wolnelektury.pl/cover.jpg",
-                formats={"epub": "https://wolnelektury.pl/x.epub", "mobi": "https://x/y.mobi"},
-                language="pl",
-            )
-        ]
+    async def fake_search(query, language="", source="", book_format="", cursor=None):
+        result = library.SearchResult(
+            source="wolnelektury",
+            ref="quo-vadis",
+            title="Quo vadis",
+            author="Henryk Sienkiewicz",
+            cover_url="https://wolnelektury.pl/cover.jpg",
+            formats={"epub": "https://wolnelektury.pl/x.epub", "mobi": "https://x/y.mobi"},
+            language="pl",
+        )
+        return library.SearchPage([result])
 
     monkeypatch.setattr(library, "search", fake_search)
     transport = ASGITransport(app=app)
@@ -105,9 +104,9 @@ async def test_search_endpoint_passes_language_and_rejects_bogus_codes(monkeypat
 
     seen: list[str] = []
 
-    async def fake_search(query, language="", source="", limit=None):
+    async def fake_search(query, language="", source="", book_format="", cursor=None):
         seen.append(language)
-        return []
+        return library.SearchPage([])
 
     monkeypatch.setattr(library, "search", fake_search)
     transport = ASGITransport(app=app)
@@ -123,9 +122,9 @@ async def test_search_endpoint_passes_source_and_rejects_bogus_ones(monkeypatch)
 
     seen: list[str] = []
 
-    async def fake_search(query, language="", source="", limit=None):
+    async def fake_search(query, language="", source="", book_format="", cursor=None):
         seen.append(source)
-        return []
+        return library.SearchPage([])
 
     monkeypatch.setattr(library, "search", fake_search)
     transport = ASGITransport(app=app)
@@ -150,8 +149,8 @@ async def test_index_renders_a_switch_option_per_source():
 async def test_search_endpoint_reports_empty_query(monkeypatch):
     from app.services import library
 
-    async def fake_search(query, language="", source="", limit=None):
-        return []
+    async def fake_search(query, language="", source="", book_format="", cursor=None):
+        return library.SearchPage([])
 
     monkeypatch.setattr(library, "search", fake_search)
     transport = ASGITransport(app=app)
@@ -456,3 +455,48 @@ async def test_convert_is_refused_outside_review(tmp_path: Path, monkeypatch):
     assert job.status == "sending"
     assert job.filename == "book.pdf"
     assert stored.exists()
+
+
+async def test_search_endpoint_passes_format_and_offers_more(monkeypatch):
+    from app.services import library
+
+    seen = []
+
+    async def fake_search(query, language="", source="", book_format="", cursor=None):
+        seen.append((source, book_format, cursor))
+        result = library.SearchResult(
+            source="zlib",
+            ref="abc",
+            title="Dune",
+            author="Frank Herbert",
+            cover_url=None,
+            formats={"epub": "epub"},
+        )
+        return library.SearchPage([result], next_cursor=(2, 4))
+
+    monkeypatch.setattr(library, "search", fake_search)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/search", params={"q": "dune", "source": "zlib", "fmt": "epub"}
+        )
+        await client.get("/search", params={"q": "dune", "fmt": "exe", "page": 2, "offset": 4})
+
+    assert seen == [("zlib", "epub", None), ("", "", (2, 4))]
+    assert "Load more" in response.text
+    assert "fmt=epub&amp;page=2&amp;offset=4" in response.text
+
+
+async def test_appended_page_without_results_is_silent(monkeypatch):
+    from app.services import library
+
+    async def fake_search(query, language="", source="", book_format="", cursor=None):
+        return library.SearchPage([])
+
+    monkeypatch.setattr(library, "search", fake_search)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/search", params={"q": "dune", "page": 3})
+
+    assert "Nothing found" not in response.text
+    assert "Load more" not in response.text

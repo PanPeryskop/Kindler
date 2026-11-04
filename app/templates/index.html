@@ -81,12 +81,18 @@
       <div class="main-panel">
         <form id="search-form" hx-get="/search" hx-target="#search-results" hx-swap="innerHTML"
           hx-indicator="#search-form"
-          hx-trigger="submit, change from:#search-lang, change from:.source-switch">
+          hx-trigger="submit, change from:#search-lang, change from:#search-format, change from:.source-switch">
           <div class="search-bar">
             <input type="search" class="field__input" name="q" id="search-input"
               placeholder="Search catalogues&hellip;" autocomplete="off">
             <select class="field__input search-bar__lang" name="lang" id="search-lang">
               {% for code, label in languages.items() %}
+              <option value="{{ code }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+            <select class="field__input search-bar__lang" name="fmt" id="search-format"
+              aria-label="Format">
+              {% for code, label in formats.items() %}
               <option value="{{ code }}">{{ label }}</option>
               {% endfor %}
             </select>

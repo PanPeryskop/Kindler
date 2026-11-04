@@ -118,7 +118,7 @@ def patch_client(monkeypatch, transport):
 async def test_search_merges_all_three_sources(monkeypatch):
     patch_client(monkeypatch, fake_api())
 
-    results = await library.search("quo vadis")
+    results = (await library.search("quo vadis")).results
 
     sources = {r.source for r in results}
     assert sources == {"wolnelektury", "gutenberg", "standardebooks"}
@@ -127,7 +127,7 @@ async def test_search_merges_all_three_sources(monkeypatch):
 async def test_standardebooks_builds_download_urls_from_repo_name(monkeypatch):
     patch_client(monkeypatch, fake_api())
 
-    results = await library.search("dracula")
+    results = (await library.search("dracula")).results
     dracula = next(r for r in results if r.ref == "bram-stoker_dracula")
 
     base = "https://standardebooks.org/ebooks/bram-stoker/dracula/downloads/"
@@ -142,7 +142,7 @@ async def test_standardebooks_builds_download_urls_from_repo_name(monkeypatch):
 async def test_standardebooks_handles_translator_in_repo_name(monkeypatch):
     patch_client(monkeypatch, fake_api())
 
-    results = await library.search("rubaiyat")
+    results = (await library.search("rubaiyat")).results
     book = next(r for r in results if "rubaiyat" in r.ref)
 
     assert book.title == "The Rubaiyat"
@@ -153,7 +153,7 @@ async def test_standardebooks_handles_translator_in_repo_name(monkeypatch):
 async def test_standardebooks_skips_non_book_repos(monkeypatch):
     patch_client(monkeypatch, fake_api())
 
-    results = await library.search("tools")
+    results = (await library.search("tools")).results
 
     assert all(r.ref != "tools" for r in results)
 
@@ -161,8 +161,8 @@ async def test_standardebooks_skips_non_book_repos(monkeypatch):
 async def test_language_filter_keeps_only_matching_sources(monkeypatch):
     patch_client(monkeypatch, fake_api())
 
-    polish = await library.search("quo vadis", language="pl")
-    english = await library.search("dracula", language="en")
+    polish = (await library.search("quo vadis", language="pl")).results
+    english = (await library.search("dracula", language="en")).results
 
     assert {r.source for r in polish} == {"wolnelektury", "gutenberg"}
     assert "standardebooks" not in {r.source for r in polish}
@@ -173,7 +173,7 @@ async def test_source_switch_queries_only_the_chosen_source(monkeypatch):
     calls: list[str] = []
     patch_client(monkeypatch, fake_api(calls))
 
-    results = await library.search("dracula", source="standardebooks")
+    results = (await library.search("dracula", source="standardebooks")).results
 
     assert {r.source for r in results} == {"standardebooks"}
     assert all("gutendex" not in c and "wolnelektury" not in c for c in calls)
@@ -182,32 +182,55 @@ async def test_source_switch_queries_only_the_chosen_source(monkeypatch):
 async def test_source_switch_overrides_the_language_filter(monkeypatch):
     patch_client(monkeypatch, fake_api())
 
-    results = await library.search("quo vadis", language="en", source="wolnelektury")
+    results = (await library.search("quo vadis", language="en", source="wolnelektury")).results
 
     assert {r.source for r in results} == {"wolnelektury"}
 
 
-async def test_zlib_search_uses_zlibrary_only_when_selected(monkeypatch):
-    async def fake_search(query, limit):
-        assert (query, limit) == ("dracula", 10)
-        return [
-            {
-                "ref": "123",
-                "title": "Dracula",
-                "author": "Bram Stoker",
-                "cover_url": None,
-                "extension": "epub",
-                "language": "en",
-            }
-        ]
+async def test_zlib_search_passes_filters_and_cursor(monkeypatch):
+    async def fake_search(query, limit, language, extension, cursor):
+        assert (query, limit, language, extension, cursor) == ("dracula", 10, "pl", "epub", (2, 5))
+        book = {
+            "ref": "123",
+            "title": "Dracula",
+            "author": "Bram Stoker",
+            "cover_url": None,
+            "extension": "epub",
+            "language": "polish",
+        }
+        return [book], (3, 0)
 
     monkeypatch.setattr(library.z_lib, "search", fake_search)
 
-    results = await library.search("dracula", source="zlib")
+    found = await library.search(
+        "dracula", language="pl", source="zlib", book_format="epub", cursor=(2, 5)
+    )
 
-    assert [(book.source, book.ref, book.formats) for book in results] == [
+    assert [(book.source, book.ref, book.formats) for book in found.results] == [
         ("zlib", "123", {"epub": "epub"})
     ]
+    assert found.next_cursor == (3, 0)
+
+
+async def test_other_sources_have_no_further_pages(monkeypatch):
+    calls: list[str] = []
+    patch_client(monkeypatch, fake_api(calls))
+
+    found = await library.search("dracula", cursor=(2, 0))
+
+    assert found.results == []
+    assert found.next_cursor is None
+    assert calls == []
+
+
+async def test_format_filter_keeps_books_offering_it(monkeypatch):
+    patch_client(monkeypatch, fake_api())
+
+    everything = (await library.search("quo vadis")).results
+    only_epub = (await library.search("quo vadis", book_format="epub")).results
+
+    assert 0 < len(only_epub) < len(everything)
+    assert all("epub" in book.formats for book in only_epub)
 
 
 async def test_zlib_is_not_queried_with_other_sources(monkeypatch):
@@ -218,7 +241,7 @@ async def test_zlib_is_not_queried_with_other_sources(monkeypatch):
 
     monkeypatch.setattr(library.z_lib, "search", unexpected_zlib_search)
 
-    results = await library.search("quo vadis", language="pl")
+    results = (await library.search("quo vadis", language="pl")).results
 
     assert {r.source for r in results} == {"wolnelektury", "gutenberg"}
 
@@ -227,7 +250,7 @@ async def test_unknown_source_yields_nothing(monkeypatch):
     calls: list[str] = []
     patch_client(monkeypatch, fake_api(calls))
 
-    assert await library.search("dracula", source="libgen") == []
+    assert (await library.search("dracula", source="libgen")).results == []
     assert calls == []
 
 
@@ -254,7 +277,7 @@ async def test_no_language_filter_queries_gutendex_without_param(monkeypatch):
 async def test_book_without_epub_still_offers_convertible_formats(monkeypatch):
     patch_client(monkeypatch, fake_api())
 
-    results = await library.search("quo vadis")
+    results = (await library.search("quo vadis")).results
     nero = next(r for r in results if "Nero" in r.title)
 
     assert "epub" not in nero.formats
@@ -264,7 +287,7 @@ async def test_book_without_epub_still_offers_convertible_formats(monkeypatch):
 async def test_non_book_formats_are_dropped(monkeypatch):
     patch_client(monkeypatch, fake_api())
 
-    results = await library.search("quo vadis")
+    results = (await library.search("quo vadis")).results
     dracula = next(r for r in results if r.title == "Dracula")
 
     assert set(dracula.formats) == {"epub", "mobi"}
@@ -274,7 +297,7 @@ async def test_non_book_formats_are_dropped(monkeypatch):
 async def test_relative_cover_paths_become_absolute(monkeypatch):
     patch_client(monkeypatch, fake_api())
 
-    results = await library.search("quo vadis")
+    results = (await library.search("quo vadis")).results
     wolne = next(r for r in results if r.source == "wolnelektury")
 
     assert wolne.cover_url == (
@@ -312,7 +335,7 @@ async def test_one_broken_source_does_not_kill_the_other(monkeypatch):
 
     patch_client(monkeypatch, httpx.MockTransport(handler))
 
-    results = await library.search("quo vadis")
+    results = (await library.search("quo vadis")).results
 
     assert results
     assert {r.source for r in results} == {"wolnelektury"}
@@ -443,7 +466,7 @@ async def test_empty_query_skips_network(monkeypatch):
     calls: list[str] = []
     patch_client(monkeypatch, fake_api(calls))
 
-    assert await library.search("   ") == []
+    assert (await library.search("   ")).results == []
     assert calls == []
 
 
