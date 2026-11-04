@@ -6,18 +6,31 @@
       <i data-lucide="settings" style="width:14px;height:14px;"></i>
     </summary>
     <div class="job-menu__list">
+      {% set fields = "#title-" ~ job_id ~ ", #author-" ~ job_id %}
       <button type="button" class="job-menu__item" hx-post="/jobs/{{ job_id }}/lookup"
-        hx-include="#job-{{ job_id }}" hx-target="#job-{{ job_id }}" hx-swap="outerHTML"
+        hx-include="{{ fields }}" hx-target="#job-{{ job_id }}" hx-swap="outerHTML"
         hx-disabled-elt="this">
         <i data-lucide="search" style="width:13px;height:13px;"></i>
         Find metadata
       </button>
-      {% if convertible %}
+      <label class="job-menu__item">
+        <i data-lucide="image-up" style="width:13px;height:13px;"></i>
+        Upload cover
+        <input type="file" name="cover" accept="image/jpeg,image/png,image/gif" hidden
+          hx-post="/jobs/{{ job_id }}/cover" hx-encoding="multipart/form-data"
+          hx-trigger="change" hx-include="{{ fields }}" hx-target="#job-{{ job_id }}"
+          hx-swap="outerHTML">
+      </label>
+      {% if presets %}
+      <hr class="job-menu__divider">
+      {% for preset, label in presets.items() %}
       <button type="button" class="job-menu__item" hx-post="/jobs/{{ job_id }}/convert"
-        hx-include="#job-{{ job_id }}" hx-target="#job-{{ job_id }}" hx-swap="outerHTML">
+        hx-vals='{"preset": "{{ preset }}"}' hx-include="{{ fields }}"
+        hx-target="#job-{{ job_id }}" hx-swap="outerHTML">
         <i data-lucide="refresh-cw" style="width:13px;height:13px;"></i>
-        Convert to EPUB
+        {{ label }}
       </button>
+      {% endfor %}
       {% endif %}
     </div>
   </details>

@@ -18,8 +18,8 @@ from app.config import settings
 from app.db import Job, init_db
 from app.queue import ACTIVE_STATUSES, JobQueue
 from app.services import library, z_lib
-from app.services.convert import CalibreConverter
-from app.services.covers import extract_cover
+from app.services.convert import CalibreConverter, options_for, presets_for
+from app.services.covers import data_uri, extract_cover, image_media_type
 from app.services.detect import FileTypeDetector
 from app.services.lookup import lookup, merge
 from app.services.metadata import apply_cover, apply_metadata, probe_metadata
@@ -28,6 +28,7 @@ from app.services.sender import send_to_kindle
 REVIEW_TTL = timedelta(hours=6)
 NATIVE_TYPES = ("epub", "pdf")
 CLEANUP_INTERVAL_SECONDS = 900
+MAX_COVER_BYTES = 2 * 1024 * 1024
 
 job_queue = JobQueue()
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ def render_job_card(request: Request, job: Job) -> str:
             "author": job.author,
             "cover": job.cover,
             "downloadable": downloadable,
-            "convertible": downloadable and Path(job.filename).suffix.lower() != ".epub",
+            "presets": presets_for(Path(job.filename).suffix) if downloadable else {},
         }
     )
 
@@ -314,13 +315,14 @@ async def send_job(
     return render_job_card(request, await job_queue.get(job_id))
 
 
-async def convert_job(job_id: str) -> None:
+async def convert_job(job_id: str, preset: str = "standard") -> None:
     job = await job_queue.get(job_id)
     if not job or not job.tmp_path:
         return
 
     source = Path(job.tmp_path)
-    converted, error = await CalibreConverter.convert_to_epub(source)
+    options = options_for(preset, Path(job.filename).suffix)
+    converted, error = await CalibreConverter.convert_to_epub(source, options)
     job = await job_queue.get(job_id)
     if not job:
         source.unlink(missing_ok=True)
@@ -340,7 +342,8 @@ async def convert_job(job_id: str) -> None:
         await job_queue.update(job_id, "review", f"Could not store the converted file: {exc}")
         return
 
-    source.unlink(missing_ok=True)
+    if target != source:
+        source.unlink(missing_ok=True)
     await job_queue.set(
         job_id, tmp_path=str(target), filename=filename, status="review", error=None
     )
@@ -353,15 +356,46 @@ async def convert_job_file(
     background_tasks: BackgroundTasks,
     title: str = Form(""),
     author: str = Form(""),
+    preset: str = Form("standard"),
 ):
     job = await job_queue.get(job_id)
     if not job or not job.tmp_path or not Path(job.tmp_path).exists():
         return HTMLResponse("<div class='job-card__error'>Job not found</div>")
-    if job.status != "review" or Path(job.filename).suffix.lower() == ".epub":
+    if job.status != "review" or preset not in presets_for(Path(job.filename).suffix):
         return render_job_card(request, job)
 
     await job_queue.set(job_id, title=title, author=author, status="converting", error=None)
-    background_tasks.add_task(convert_job, job_id)
+    background_tasks.add_task(convert_job, job_id, preset)
+    return render_job_card(request, await job_queue.get(job_id))
+
+
+@app.post("/jobs/{job_id}/cover", response_class=HTMLResponse)
+async def upload_job_cover(
+    request: Request,
+    job_id: str,
+    cover: UploadFile = File(...),
+    title: str = Form(""),
+    author: str = Form(""),
+):
+    job = await job_queue.get(job_id)
+    if not job:
+        return HTMLResponse("<div class='job-card__error'>Job not found</div>")
+    if job.status != "review":
+        return render_job_card(request, job)
+
+    data = await cover.read(MAX_COVER_BYTES + 1)
+    media_type = image_media_type(data)
+    if len(data) > MAX_COVER_BYTES:
+        error = f"The cover must be smaller than {MAX_COVER_BYTES // 1_048_576} MB."
+    elif media_type is None:
+        error = "The cover must be a JPEG, PNG or GIF image."
+    else:
+        error = None
+
+    fields = {"title": title, "author": author, "error": error}
+    if error is None:
+        fields["cover"] = data_uri(data, media_type)
+    await job_queue.set(job_id, **fields)
     return render_job_card(request, await job_queue.get(job_id))
 
 

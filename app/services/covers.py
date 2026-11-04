@@ -5,6 +5,17 @@ import ebooklib
 import fitz
 from ebooklib import epub
 
+IMAGE_SIGNATURES = (
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def image_media_type(data: bytes) -> str | None:
+    return next((mime for magic, mime in IMAGE_SIGNATURES if data.startswith(magic)), None)
+
 
 def data_uri(data: bytes, mime: str) -> str:
     encoded = base64.b64encode(data).decode()

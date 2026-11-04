@@ -380,8 +380,12 @@ async def make_pdf_job(tmp_path: Path) -> tuple[str, Path]:
     return job.id, stored
 
 
-def fake_converter(monkeypatch, tmp_path: Path, error: str | None = None):
-    async def convert_to_epub(input_path: Path):
+def fake_converter(
+    monkeypatch, tmp_path: Path, error: str | None = None, calls: list | None = None
+):
+    async def convert_to_epub(input_path: Path, options=()):
+        if calls is not None:
+            calls.append((input_path.name, list(options)))
         if error:
             return None, error
         output = tmp_path / "calibre-output.epub"
@@ -391,7 +395,7 @@ def fake_converter(monkeypatch, tmp_path: Path, error: str | None = None):
     monkeypatch.setattr("app.main.CalibreConverter.convert_to_epub", convert_to_epub)
 
 
-async def test_review_card_offers_conversion_only_for_non_epub(tmp_path: Path):
+async def test_review_card_offers_presets_that_fit_the_file(tmp_path: Path):
     pdf_id, _ = await make_pdf_job(tmp_path)
     epub_id, _ = await make_review_job(tmp_path)
 
@@ -401,7 +405,11 @@ async def test_review_card_offers_conversion_only_for_non_epub(tmp_path: Path):
         epub_card = await client.get(f"/jobs/{epub_id}")
 
     assert f'hx-post="/jobs/{pdf_id}/convert"' in pdf_card.text
-    assert "/convert" not in epub_card.text
+    for preset in ("standard", "cleanup", "text", "pdftohtml"):
+        assert f'"preset": "{preset}"' in pdf_card.text
+    assert '"preset": "cleanup"' in epub_card.text
+    assert '"preset": "standard"' not in epub_card.text
+    assert '"preset": "text"' not in epub_card.text
 
 
 async def test_convert_replaces_the_file_with_an_epub(tmp_path: Path, monkeypatch):
@@ -552,3 +560,88 @@ async def test_review_card_always_offers_lookup(tmp_path: Path):
         response = await client.get(f"/jobs/{job_id}")
 
     assert f'hx-post="/jobs/{job_id}/lookup"' in response.text
+
+
+async def test_convert_passes_the_preset_options(tmp_path: Path, monkeypatch):
+    calls: list = []
+    fake_converter(monkeypatch, tmp_path, calls=calls)
+    job_id, _ = await make_pdf_job(tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(f"/jobs/{job_id}/convert", data={"preset": "cleanup"})
+
+    assert calls == [
+        (
+            f"{job_id}_book.pdf",
+            ["--enable-heuristics", "--smarten-punctuation", "--unwrap-factor", "0.45"],
+        )
+    ]
+    Path((await job_queue.get(job_id)).tmp_path).unlink(missing_ok=True)
+
+
+async def test_unknown_or_unfit_preset_is_refused(tmp_path: Path, monkeypatch):
+    calls: list = []
+    fake_converter(monkeypatch, tmp_path, calls=calls)
+    epub_id, _ = await make_review_job(tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(f"/jobs/{epub_id}/convert", data={"preset": "text"})
+        await client.post(f"/jobs/{epub_id}/convert", data={"preset": "rm -rf"})
+
+    assert calls == []
+    assert (await job_queue.get(epub_id)).status == "review"
+
+
+async def test_epub_can_be_cleaned_up_in_place(tmp_path: Path, monkeypatch):
+    fake_converter(monkeypatch, tmp_path)
+    job_id, stored = await make_review_job(tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(f"/jobs/{job_id}/convert", data={"preset": "cleanup"})
+
+    job = await job_queue.get(job_id)
+    assert job.status == "review"
+    assert job.filename == "book.epub"
+    assert Path(job.tmp_path) == stored
+    assert stored.exists()
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+
+
+async def test_uploaded_cover_replaces_the_card_cover(tmp_path: Path):
+    job_id, _ = await make_pdf_job(tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/jobs/{job_id}/cover",
+            files={"cover": ("c.png", PNG, "image/png")},
+            data={"title": "Drakula", "author": "Stoker"},
+        )
+
+    job = await job_queue.get(job_id)
+    assert job.cover.startswith("data:image/png;base64,")
+    assert (job.title, job.author) == ("Drakula", "Stoker")
+    assert job.cover in response.text
+
+
+async def test_cover_upload_rejects_non_images_and_large_files(tmp_path: Path, monkeypatch):
+    job_id, _ = await make_pdf_job(tmp_path)
+    monkeypatch.setattr("app.main.MAX_COVER_BYTES", 32)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        html_response = await client.post(
+            f"/jobs/{job_id}/cover", files={"cover": ("c.png", b"<html>", "image/png")}
+        )
+        big_response = await client.post(
+            f"/jobs/{job_id}/cover", files={"cover": ("c.png", PNG * 4, "image/png")}
+        )
+
+    assert "JPEG, PNG or GIF" in html_response.text
+    assert "smaller than" in big_response.text
+    assert (await job_queue.get(job_id)).cover is None
