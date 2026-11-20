@@ -647,14 +647,21 @@ async def test_cover_upload_rejects_non_images_and_large_files(tmp_path: Path, m
     assert (await job_queue.get(job_id)).cover is None
 
 
-async def test_polling_skips_the_swap_while_the_status_is_unchanged(tmp_path: Path):
+async def card_version(job_id: str) -> str:
+    from app.main import job_card_context
+
+    return job_card_context(await job_queue.get(job_id))["version"]
+
+
+async def test_polling_skips_the_swap_while_the_card_is_unchanged(tmp_path: Path):
     job_id, _ = await make_review_job(tmp_path, status="sending")
+    version = await card_version(job_id)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        unchanged = await client.get(f"/jobs/{job_id}", params={"since": "sending"})
+        unchanged = await client.get(f"/jobs/{job_id}", params={"since": version})
         await job_queue.update(job_id, "sent")
-        changed = await client.get(f"/jobs/{job_id}", params={"since": "sending"})
+        changed = await client.get(f"/jobs/{job_id}", params={"since": version})
 
     assert unchanged.status_code == 204
     assert unchanged.content == b""
@@ -662,12 +669,27 @@ async def test_polling_skips_the_swap_while_the_status_is_unchanged(tmp_path: Pa
     assert "Sent" in changed.text
 
 
+async def test_polling_swaps_when_the_card_changes_without_a_status_change(tmp_path: Path):
+    job_id, _ = await make_review_job(tmp_path, status="converting")
+    version = await card_version(job_id)
+    await job_queue.set(job_id, error="Retrying conversion")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/jobs/{job_id}", params={"since": version})
+
+    assert response.status_code == 200
+    assert "Retrying conversion" in response.text
+    assert f"since={await card_version(job_id)}" in response.text
+
+
 async def test_index_busts_the_stylesheet_cache():
-    from app.main import STATIC_VERSION
+    from app.main import static_url
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/")
 
-    assert f"/static/css/style.css?v={STATIC_VERSION}" in response.text
+    assert static_url("css/style.css") in response.text
+    assert "/static/css/style.css?v=" in response.text
     assert "lucide@latest" not in response.text

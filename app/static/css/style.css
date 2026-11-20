@@ -55,6 +55,9 @@ html.theme-switching *::after {
   --sun: #FFD600;
   --mint: #00E5A0;
   --mint-light: #E8FFF5;
+  --status-success-bg: #DDFFF0;
+  --status-success-ink: #0A7B3E;
+  --status-failed-bg: #FFE5EA;
 
   --border: 3px solid var(--ink);
   --border-thin: 2px solid var(--ink);
@@ -100,15 +103,14 @@ html.theme-switching *::after {
   --sun: #FFDF33;
   --mint: #33FFB8;
   --mint-light: #0A2E1F;
+  --status-success-bg: var(--mint-light);
+  --status-success-ink: var(--mint);
+  --status-failed-bg: var(--hot-light);
 
   --border: 3px solid #000;
   --border-thin: 2px solid #000;
   --border-muted: 2px solid #333;
   --shadow-color: #000;
-  --shadow: 5px 5px 0px var(--shadow-color);
-  --shadow-sm: 3px 3px 0px var(--shadow-color);
-  --shadow-hover: 7px 7px 0px var(--shadow-color);
-  --shadow-active: 2px 2px 0px var(--shadow-color);
 }
 
 
@@ -164,6 +166,11 @@ h3 {
   .workspace__side {
     position: sticky;
     top: var(--space-lg);
+    max-height: calc(100vh - 2 * var(--space-lg));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    margin: calc(-1 * var(--space-sm));
+    padding: var(--space-sm);
   }
 
   .workspace__side .jobs-section {
@@ -349,13 +356,14 @@ h3 {
   color: var(--accent);
 }
 
+.theme-toggle__icon--dark,
+[data-theme="dark"] .theme-toggle__icon--light {
+  display: inline-flex;
+}
+
 .theme-toggle__icon--light,
 [data-theme="dark"] .theme-toggle__icon--dark {
   display: none;
-}
-
-[data-theme="dark"] .theme-toggle__icon--light {
-  display: inline-flex;
 }
 
 .main-panel {
@@ -910,16 +918,12 @@ summary.job-card__action::-webkit-details-marker {
 }
 
 .status--success {
-  background: var(--mint-light);
-  color: #0A7B3E;
-}
-
-[data-theme="dark"] .status--success {
-  color: var(--mint);
+  background: var(--status-success-bg);
+  color: var(--status-success-ink);
 }
 
 .status--failed {
-  background: var(--hot-light);
+  background: var(--status-failed-bg);
   color: var(--hot);
 }
 

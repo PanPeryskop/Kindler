@@ -1,5 +1,7 @@
 import asyncio
+import hashlib
 import html
+import json
 import logging
 import shutil
 import tempfile
@@ -29,6 +31,8 @@ REVIEW_TTL = timedelta(hours=6)
 NATIVE_TYPES = ("epub", "pdf")
 CLEANUP_INTERVAL_SECONDS = 900
 MAX_COVER_BYTES = 2 * 1024 * 1024
+APP_DIR = Path(__file__).parent
+STATIC_DIR = APP_DIR / "static"
 
 job_queue = JobQueue()
 logger = logging.getLogger(__name__)
@@ -70,28 +74,44 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-templates = Jinja2Templates(directory="app/templates")
-STATIC_VERSION = str(int(Path("app/static/css/style.css").stat().st_mtime))
+templates = Jinja2Templates(directory=APP_DIR / "templates")
+
+
+def static_url(path: str) -> str:
+    version = int((STATIC_DIR / path).stat().st_mtime)
+    return f"/static/{path}?v={version}"
+
+
+templates.env.globals["static_url"] = static_url
+
+
+def job_card_context(job: Job) -> dict:
+    downloadable = bool(job.tmp_path and Path(job.tmp_path).exists())
+    context = {
+        "job_id": job.id,
+        "filename": job.filename,
+        "status": job.status,
+        "error": job.error,
+        "title": job.title,
+        "author": job.author,
+        "cover": job.cover,
+        "downloadable": downloadable,
+        "presets": presets_for(Path(job.filename).suffix) if downloadable else {},
+    }
+    digest = hashlib.sha1(json.dumps(context, sort_keys=True).encode()).hexdigest()
+    return {**context, "version": digest[:12]}
+
+
+def render_card(request: Request, context: dict) -> str:
+    return templates.get_template("partials/job_card.html").render(
+        {"request": request, **context}
+    )
 
 
 def render_job_card(request: Request, job: Job) -> str:
-    downloadable = bool(job.tmp_path and Path(job.tmp_path).exists())
-    return templates.get_template("partials/job_card.html").render(
-        {
-            "request": request,
-            "job_id": job.id,
-            "filename": job.filename,
-            "status": job.status,
-            "error": job.error,
-            "title": job.title,
-            "author": job.author,
-            "cover": job.cover,
-            "downloadable": downloadable,
-            "presets": presets_for(Path(job.filename).suffix) if downloadable else {},
-        }
-    )
+    return render_card(request, job_card_context(job))
 
 
 def inspect_file(path: Path, fallback_title: str) -> tuple[str, str, str | None]:
@@ -156,7 +176,6 @@ async def index(request: Request):
         name="index.html",
         context={
             "request": request,
-            "static_version": STATIC_VERSION,
             "default_kindle": settings.kindle_address,
             "max_size": settings.max_attachment_mb,
             "languages": library.LANGUAGES,
@@ -463,6 +482,7 @@ async def job_status(request: Request, job_id: str, since: str = ""):
     job = await job_queue.get(job_id)
     if not job:
         return HTMLResponse("<div class='job-card__error'>Job not found</div>")
-    if since and since == job.status:
+    context = job_card_context(job)
+    if since == context["version"]:
         return Response(status_code=204)
-    return render_job_card(request, job)
+    return render_card(request, context)

@@ -19,15 +19,22 @@
 
   <script src="https://unpkg.com/lucide@1.68.0/dist/umd/lucide.min.js" defer></script>
 
-  <link rel="stylesheet" href="/static/css/style.css?v={{ static_version }}">
+  <link rel="stylesheet" href="{{ static_url('css/style.css') }}">
 
   <script>
-    (() => {
-      let saved = null;
-      try { saved = localStorage.getItem('theme'); } catch (error) {}
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      document.documentElement.setAttribute('data-theme', saved || (prefersDark ? 'dark' : 'light'));
-    })();
+    const themePreference = {
+      query: window.matchMedia('(prefers-color-scheme: dark)'),
+      saved() {
+        try { return localStorage.getItem('theme'); } catch (error) { return null; }
+      },
+      save(theme) {
+        try { localStorage.setItem('theme', theme); } catch (error) {}
+      },
+      resolve() {
+        return this.saved() || (this.query.matches ? 'dark' : 'light');
+      },
+    };
+    document.documentElement.setAttribute('data-theme', themePreference.resolve());
   </script>
 </head>
 
@@ -189,19 +196,21 @@
       });
     }
 
-    function savedTheme() {
-      try { return localStorage.getItem('theme'); } catch (error) { return null; }
-    }
-
     document.getElementById('theme-toggle').addEventListener('click', () => {
       const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
       applyTheme(theme);
-      try { localStorage.setItem('theme', theme); } catch (error) {}
+      themePreference.save(theme);
     });
 
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (event) => {
-      if (!savedTheme()) applyTheme(event.matches ? 'dark' : 'light');
-    });
+    function followSystemTheme() {
+      if (!themePreference.saved()) applyTheme(themePreference.resolve());
+    }
+
+    if (themePreference.query.addEventListener) {
+      themePreference.query.addEventListener('change', followSystemTheme);
+    } else {
+      themePreference.query.addListener(followSystemTheme);
+    }
 
     document.addEventListener('DOMContentLoaded', () => {
       if (window.lucide) lucide.createIcons();
