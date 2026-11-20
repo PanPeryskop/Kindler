@@ -818,3 +818,133 @@ async def test_index_offers_batch_actions_and_history():
     assert 'id="send-all"' in response.text
     assert 'id="pick-bar"' in response.text
     assert 'hx-get="/history"' in response.text
+
+
+async def test_index_takes_the_default_kindle_address_from_settings():
+    from app.preferences import save_preferences
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        empty = await client.get("/")
+        await save_preferences(kindle_address="me_1@kindle.com")
+        saved = await client.get("/")
+
+    assert 'id="kindle-addr" value=""' in empty.text
+    assert 'id="kindle-addr" value="me_1@kindle.com"' in saved.text
+
+
+async def post_settings(**data):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.post("/settings", data=data)
+
+
+async def test_saving_settings_updates_the_page(monkeypatch):
+    from app.preferences import preferences
+
+    response = await post_settings(kindle_address=" me_1@kindle.com ")
+
+    assert preferences.kindle_address == "me_1@kindle.com"
+    assert preferences.show_sender_notice is False
+    assert "Saved" in response.text
+    assert 'id="kindle-addr" value="me_1@kindle.com"' in response.text
+    assert '<div id="sender-notice" hidden hx-swap-oob="true">' in response.text
+
+
+async def test_invalid_settings_are_reported_and_not_saved():
+    from app.preferences import preferences
+
+    response = await post_settings(kindle_address="not-an-address", show_sender_notice="true")
+
+    assert "look like an e-mail address" in response.text
+    assert 'value="not-an-address"' in response.text
+    assert preferences.kindle_address == ""
+    assert "hx-swap-oob" not in response.text
+
+
+async def test_new_zlib_account_needs_a_password():
+    from app.preferences import preferences
+
+    response = await post_settings(zlib_email="me@example.com")
+
+    assert "Enter the Z-Lib password" in response.text
+    assert preferences.zlib_email == ""
+
+
+async def test_zlib_account_change_restarts_the_session(monkeypatch):
+    from app.preferences import preferences
+    from app.services import z_lib
+
+    calls = []
+
+    async def reset():
+        calls.append("reset")
+
+    async def warm_up():
+        calls.append("warm_up")
+
+    monkeypatch.setattr(z_lib, "reset", reset)
+    monkeypatch.setattr(z_lib, "warm_up", warm_up)
+
+    await post_settings(zlib_email="me@example.com", zlib_password="secret")
+    await post_settings(zlib_email="me@example.com", zlib_password="")
+
+    assert (preferences.zlib_email, preferences.zlib_password) == ("me@example.com", "secret")
+    assert calls == ["reset", "warm_up"]
+
+
+async def test_clearing_the_zlib_email_removes_the_account(monkeypatch):
+    from app.preferences import preferences, save_preferences
+    from app.services import z_lib
+
+    async def noop():
+        pass
+
+    monkeypatch.setattr(z_lib, "reset", noop)
+    monkeypatch.setattr(z_lib, "warm_up", noop)
+    await save_preferences(zlib_email="me@example.com", zlib_password="secret")
+
+    await post_settings(zlib_email="")
+
+    assert (preferences.zlib_email, preferences.zlib_password) == ("", "")
+
+
+async def test_settings_form_never_shows_the_saved_password():
+    from app.preferences import save_preferences
+
+    await save_preferences(zlib_email="me@example.com", zlib_password="secret")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/settings")
+
+    assert 'value="me@example.com"' in response.text
+    assert "secret" not in response.text
+    assert "leave blank to keep" in response.text
+
+
+async def test_dismissed_notice_stays_hidden():
+    from app.preferences import preferences
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        shown = await client.get("/")
+        dismissed = await client.post("/settings/notice/dismiss")
+        page = await client.get("/")
+
+    assert "Sender whitelist required" in shown.text
+    assert preferences.show_sender_notice is False
+    assert 'id="sender-notice" hidden' in dismissed.text
+    assert "notice__content" not in dismissed.text
+    assert "Sender whitelist required" not in page.text
+
+
+async def test_settings_form_never_reveals_the_environment_account(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "zlib_email", "owner@example.com")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/settings")
+
+    assert "owner@example.com" not in response.text
+    assert ".env" not in response.text

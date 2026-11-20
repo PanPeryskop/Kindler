@@ -1,0 +1,23 @@
+{% if show_notice %}
+<div class="notice" id="sender-notice" role="note" {% if oob %}hx-swap-oob="true"{% endif %}>
+  <div class="notice__icon">
+    <i data-lucide="triangle-alert" style="width:20px;height:20px;"></i>
+  </div>
+  <div class="notice__content">
+    <strong>Sender whitelist required</strong>
+    Your sending address must be on Amazon's
+    <a href="https://www.amazon.com/hz/mycd/myx#/home/settings/payment" target="_blank" rel="noopener"
+      class="notice__link">
+      Approved Personal Document E-mail List
+    </a>
+    - otherwise files are silently dropped with no error.
+    Delivery typically takes 1-5 minutes. There is no delivery confirmation.
+  </div>
+  <button type="button" class="notice__close" hx-post="/settings/notice/dismiss" hx-target="#sender-notice"
+    hx-swap="outerHTML" title="Dismiss" aria-label="Dismiss the reminder">
+    <i data-lucide="x" style="width:18px;height:18px;"></i>
+  </button>
+</div>
+{% else %}
+<div id="sender-notice" hidden {% if oob %}hx-swap-oob="true"{% endif %}></div>
+{% endif %}

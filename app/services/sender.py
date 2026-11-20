@@ -58,7 +58,10 @@ async def send_to_kindle(
 
     msg = EmailMessage()
     msg["From"] = settings.email_host_user or "noreply@example.com"
-    msg["To"] = kindle_address or settings.test_email or settings.kindle_address
+    recipient = kindle_address or settings.test_email
+    if not recipient:
+        raise ValueError("No Kindle address. Enter one or set a default in Settings.")
+    msg["To"] = recipient
     msg["Subject"] = email_subject
     msg.set_content(email_body)
 

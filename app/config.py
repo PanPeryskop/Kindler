@@ -11,7 +11,6 @@ class Settings(BaseSettings):
     email_host_password: str
 
     test_email: str | None = None
-    kindle_address: str
     max_attachment_mb: int = 18
     db_path: str = "kindler.db"
     search_limit: int = 10

@@ -17,6 +17,7 @@ from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.exceptions import RequestException
 
 from app.config import settings
+from app.preferences import preferences
 
 ZLIB_TOR_DOMAIN = "http://bookszlibb74ugqojhzhg2a63w5i2atv5bqarulgczawnbmsb6s6qead.onion"
 ZLIB_LANGUAGES = {
@@ -87,9 +88,14 @@ def _session_timeout() -> int:
     return _timeout() * 4 + CHALLENGE_TIMEOUT_SECONDS
 
 
+def _credentials() -> tuple[str, str]:
+    if preferences.zlib_email:
+        return preferences.zlib_email, preferences.zlib_password
+    return settings.zlib_email or "", settings.zlib_password or ""
+
+
 def _configured() -> bool:
-    has_login = bool(settings.zlib_email and settings.zlib_password)
-    return has_login or Path(settings.zlib_cookies_file).is_file()
+    return all(_credentials()) or Path(settings.zlib_cookies_file).is_file()
 
 
 def _mirror() -> str:
@@ -241,15 +247,16 @@ async def _get_text(http: AsyncSession, url: str) -> tuple[int, str]:
 
 
 async def _login(http: AsyncSession, mirror: str) -> None:
-    if not settings.zlib_email or not settings.zlib_password:
-        raise RuntimeError("Z-Lib needs a logged-in cookies.txt or ZLIB_EMAIL and ZLIB_PASSWORD.")
+    email, password = _credentials()
+    if not email or not password:
+        raise RuntimeError("Z-Lib needs an account: add it in Settings or provide cookies.txt.")
 
     response = await http.post(
         f"{mirror}/rpc.php",
         data={
             "isModal": "true",
-            "email": settings.zlib_email,
-            "password": settings.zlib_password,
+            "email": email,
+            "password": password,
             "site_mode": "books",
             "action": "login",
             "isSingleLogin": "1",
@@ -265,12 +272,12 @@ async def _login(http: AsyncSession, mirror: str) -> None:
     except json.JSONDecodeError as exc:
         raise RuntimeError("Z-Lib login returned an unexpected response.") from exc
     if result.get("validationError") or not all(http.cookies.get(name) for name in SESSION_COOKIES):
-        raise RuntimeError("Z-Lib login failed: check ZLIB_EMAIL and ZLIB_PASSWORD.")
+        raise RuntimeError("Z-Lib login failed: check the account in Settings.")
 
 
 async def _open_session() -> _ZSession:
     mirror = _mirror()
-    cookies = _load_cookies(mirror)
+    cookies = {} if preferences.zlib_email else _load_cookies(mirror)
     cleared, user_agent = _load_state(mirror)
     http = _new_http({**cookies, **cleared}, user_agent)
     try:
@@ -301,6 +308,9 @@ async def _establish() -> _ZSession:
         raise ZLibraryUnreachable(
             "Z-Library took too long to open a session. Try again in a minute."
         ) from exc
+    if _opening is not asyncio.current_task():
+        _retire(session)
+        return session
     _session = session
     return session
 
@@ -321,6 +331,13 @@ async def _get_session() -> _ZSession:
         _opening = asyncio.create_task(_establish())
         _opening.add_done_callback(_forget_opening)
     return await asyncio.shield(_opening)
+
+
+async def reset() -> None:
+    global _session, _opening
+    session, _session, _opening = _session, None, None
+    if session is not None:
+        await session.http.close()
 
 
 async def _reset_session(stale: _ZSession) -> None:
@@ -359,7 +376,7 @@ def _retire(session: _ZSession) -> None:
     task.add_done_callback(_retiring.discard)
 
 
-async def _warm_up() -> None:
+async def warm_up() -> None:
     if not _configured():
         return
     try:
@@ -371,7 +388,7 @@ async def _warm_up() -> None:
 async def keep_warm() -> None:
     global _session
     if not _use_tor():
-        await _warm_up()
+        await warm_up()
         return
 
     while True:

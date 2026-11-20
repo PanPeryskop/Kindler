@@ -58,10 +58,10 @@ EMAIL_USE_TLS=True
 EMAIL_HOST_USER=your_address@gmail.com
 EMAIL_HOST_PASSWORD=your16charapppassword
 
-KINDLE_ADDRESS=your_kindle_address@kindle.com
 MAX_ATTACHMENT_MB=18
 
-# Optional: Z-Lib source (a logged-in cookies.txt in the project root also works)
+# Optional: Z-Lib account, used until one is saved in Settings
+# (a logged-in cookies.txt in the project root also works)
 ZLIB_EMAIL=your_zlibrary_email
 ZLIB_PASSWORD=your_zlibrary_password
 ZLIB_MIRROR=https://z-lib.sk
@@ -69,6 +69,11 @@ ZLIB_MIRROR=https://z-lib.sk
 # Route Z-Lib through Tor (onion site); 9150 = Tor Browser, 9050 = tor service
 # ZLIB_TOR_PROXY=socks5://127.0.0.1:9150
 ```
+
+The default Kindle address, the Z-Lib account and the sender reminder are set
+in the app under Settings (the gear icon) and stored in the job database. A
+Z-Lib account saved there takes precedence over `ZLIB_EMAIL` / `ZLIB_PASSWORD`
+and `cookies.txt`.
 
 ### 4. Running
 

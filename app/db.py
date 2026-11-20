@@ -28,6 +28,11 @@ class Job(SQLModel, table=True):
     sent_at: datetime | None = None
 
 
+class Preference(SQLModel, table=True):
+    key: str = Field(primary_key=True)
+    value: str
+
+
 engine = create_async_engine(f"sqlite+aiosqlite:///{settings.db_path}")
 session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

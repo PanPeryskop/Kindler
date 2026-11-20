@@ -94,3 +94,12 @@ async def test_oversized_file_is_rejected(tmp_path: Path, smtp_sink, monkeypatch
 
     with pytest.raises(ValueError, match="limit is 1 MB"):
         await send_to_kindle(f)
+
+
+async def test_sending_without_any_recipient_is_refused(tmp_path: Path, smtp_sink, monkeypatch):
+    monkeypatch.setattr(settings, "test_email", None)
+    f = tmp_path / "book.epub"
+    f.write_bytes(b"content")
+
+    with pytest.raises(ValueError, match="No Kindle address"):
+        await send_to_kindle(f)

@@ -50,7 +50,11 @@
           </div>
           <h1 class="site-header__title">Send to Kindle</h1>
         </div>
-        <div style="display: flex; align-items: center; gap: 1rem;">
+        <div class="site-header__actions">
+          <button type="button" class="theme-toggle" id="settings-open" aria-label="Open settings"
+            aria-haspopup="dialog" title="Settings">
+            <i data-lucide="settings" style="width:20px;height:20px;"></i>
+          </button>
           <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle dark mode">
             <span class="theme-toggle__icon--dark">
               <i data-lucide="moon" style="width:20px;height:20px;"></i>
@@ -63,21 +67,7 @@
       </header>
 
 
-      <div class="notice" role="note">
-        <div class="notice__icon">
-          <i data-lucide="triangle-alert" style="width:20px;height:20px;"></i>
-        </div>
-        <div class="notice__content">
-          <strong>Sender whitelist required</strong>
-          Your sending address must be on Amazon's
-          <a href="https://www.amazon.com/hz/mycd/myx#/home/settings/payment" target="_blank" rel="noopener"
-            class="notice__link">
-            Approved Personal Document E-mail List
-          </a>
-          — otherwise files are silently dropped with no error.
-          Delivery typically takes 1-5 minutes. There is no delivery confirmation.
-        </div>
-      </div>
+      {% include "partials/sender_notice.html" %}
 
 
       <div class="config-section">
@@ -86,9 +76,11 @@
             <i data-lucide="at-sign" style="width:12px;height:12px;"></i>
             Kindle delivery address
           </label>
-          <input type="email" class="field__input" id="kindle-addr" value="{{ default_kindle }}"
-            placeholder="you_123@kindle.com" required>
-          <span class="field__hint">Found in Amazon &gt; Manage Your Content and Devices &gt; Preferences</span>
+          {% include "partials/kindle_input.html" %}
+          <span class="field__hint">
+            Found in Amazon &gt; Manage Your Content and Devices &gt; Preferences.
+            Change the default in Settings.
+          </span>
         </div>
       </div>
 
@@ -130,7 +122,7 @@
             </label>
             {% endfor %}
           </div>
-          <span class="field__hint">Any format &mdash; converted if needed</span>
+          <span class="field__hint">Any format - converted if needed</span>
         </form>
 
         <div class="pick-bar" id="pick-bar" hidden>
@@ -164,7 +156,7 @@
               Drop your files here or <strong>click to browse</strong>
             </div>
             <div class="dropzone__formats">
-              epub / pdf / mobi / docx / txt / html — max {{ max_size }}mb
+              epub / pdf / mobi / docx / txt / html - max {{ max_size }}mb
             </div>
             <div class="dropzone__filename" id="dropzone-filename"></div>
           </div>
@@ -208,6 +200,16 @@
     </div>
   </div>
 
+
+  <dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-title">
+    <div class="settings-dialog__header">
+      <h2 class="settings-dialog__title" id="settings-title">Settings</h2>
+      <button type="button" class="job-card__action" data-close-dialog aria-label="Close settings">
+        <i data-lucide="x" style="width:16px;height:16px;"></i>
+      </button>
+    </div>
+    <div id="settings-body"></div>
+  </dialog>
 
   <script>
     function applyTheme(theme) {
@@ -306,6 +308,19 @@
       defaultText.innerHTML = 'Drop your files here or <strong>click to browse</strong>';
       if (formatsDisplay) formatsDisplay.style.display = '';
     }
+
+    const settingsDialog = document.getElementById('settings-dialog');
+
+    document.getElementById('settings-open').addEventListener('click', () => {
+      htmx.ajax('GET', '/settings', { target: '#settings-body', swap: 'innerHTML' });
+      settingsDialog.showModal();
+    });
+
+    settingsDialog.addEventListener('click', (event) => {
+      if (event.target === settingsDialog || event.target.closest('[data-close-dialog]')) {
+        settingsDialog.close();
+      }
+    });
 
     const jobsList = document.getElementById('jobs-list');
     const sendAll = document.getElementById('send-all');

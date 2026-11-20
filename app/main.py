@@ -3,6 +3,7 @@ import hashlib
 import html
 import json
 import logging
+import re
 import shutil
 import tempfile
 from contextlib import asynccontextmanager, suppress
@@ -18,6 +19,7 @@ from slugify import slugify
 
 from app.config import settings
 from app.db import Job, init_db, utcnow
+from app.preferences import load_preferences, preferences, save_preferences
 from app.queue import ACTIVE_STATUSES, JobQueue
 from app.services import library, z_lib
 from app.services.convert import CalibreConverter, options_for, presets_for
@@ -32,6 +34,7 @@ NATIVE_TYPES = ("epub", "pdf")
 CLEANUP_INTERVAL_SECONDS = 900
 MAX_COVER_BYTES = 2 * 1024 * 1024
 HISTORY_LIMIT = 100
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 APP_DIR = Path(__file__).parent
 STATIC_DIR = APP_DIR / "static"
 
@@ -63,6 +66,7 @@ async def cleanup_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await load_preferences()
     await fail_interrupted_jobs()
     await discard_abandoned_uploads()
     tasks = [asyncio.create_task(cleanup_loop()), asyncio.create_task(z_lib.keep_warm())]
@@ -199,13 +203,94 @@ async def index(request: Request):
         name="index.html",
         context={
             "request": request,
-            "default_kindle": settings.kindle_address,
+            "default_kindle": preferences.kindle_address,
+            "show_notice": preferences.show_sender_notice,
             "max_size": settings.max_attachment_mb,
             "languages": library.LANGUAGES,
             "sources": library.SOURCES,
             "formats": library.FORMATS,
         },
     )
+
+
+def settings_values() -> dict[str, object]:
+    return {
+        "kindle_address": preferences.kindle_address,
+        "zlib_email": preferences.zlib_email,
+        "show_sender_notice": preferences.show_sender_notice,
+    }
+
+
+def settings_error(kindle_address: str, zlib_email: str, zlib_password: str) -> str | None:
+    if kindle_address and not EMAIL_PATTERN.match(kindle_address):
+        return "The Kindle address doesn't look like an e-mail address."
+    if zlib_email and not EMAIL_PATTERN.match(zlib_email):
+        return "The Z-Lib e-mail doesn't look like an e-mail address."
+    if zlib_email and not (zlib_password or preferences.zlib_password):
+        return "Enter the Z-Lib password."
+    return None
+
+
+def render_settings(request: Request, name: str, **context: object) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name=name,
+        context={
+            "request": request,
+            "values": settings_values(),
+            "has_password": bool(preferences.zlib_password),
+            "default_kindle": preferences.kindle_address,
+            "show_notice": preferences.show_sender_notice,
+            **context,
+        },
+    )
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_form(request: Request):
+    return render_settings(request, "partials/settings_form.html")
+
+
+@app.post("/settings", response_class=HTMLResponse)
+async def save_settings(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    kindle_address: str = Form(""),
+    zlib_email: str = Form(""),
+    zlib_password: str = Form(""),
+    show_sender_notice: bool = Form(False),
+):
+    kindle_address, zlib_email = kindle_address.strip(), zlib_email.strip()
+    error = settings_error(kindle_address, zlib_email, zlib_password)
+    if error:
+        values = {
+            "kindle_address": kindle_address,
+            "zlib_email": zlib_email,
+            "show_sender_notice": show_sender_notice,
+        }
+        return render_settings(request, "partials/settings_form.html", values=values, error=error)
+
+    password = (zlib_password or preferences.zlib_password) if zlib_email else ""
+    account_changed = (zlib_email, password) != (
+        preferences.zlib_email,
+        preferences.zlib_password,
+    )
+    await save_preferences(
+        kindle_address=kindle_address,
+        zlib_email=zlib_email,
+        zlib_password=password,
+        show_sender_notice=show_sender_notice,
+    )
+    if account_changed:
+        await z_lib.reset()
+        background_tasks.add_task(z_lib.warm_up)
+    return render_settings(request, "partials/settings_saved.html", saved=True, oob=True)
+
+
+@app.post("/settings/notice/dismiss", response_class=HTMLResponse)
+async def dismiss_notice(request: Request):
+    await save_preferences(show_sender_notice=False)
+    return render_settings(request, "partials/sender_notice.html")
 
 
 @app.get("/search", response_class=HTMLResponse)
