@@ -1,0 +1,43 @@
+<section id="zlib-accounts" class="accounts" aria-labelledby="zlib-accounts-title"
+  {% if oob %}hx-swap-oob="true"{% endif %}>
+  <h3 class="field__label" id="zlib-accounts-title">
+    <i data-lucide="library" style="width:12px;height:12px;"></i>
+    Z-Library accounts
+  </h3>
+
+  {% for account in accounts %}
+  <div class="account-row{% if account.email == active %} account-row--active{% endif %}">
+    <label class="account-row__pick">
+      <input type="radio" name="email" value="{{ account.email }}" {% if account.email == active %}checked{% endif %}
+        hx-post="/settings/zlib/active" hx-trigger="change" hx-swap="none">
+      <span class="account-row__email">{{ account.email }}</span>
+    </label>
+    {% if account.email == active %}
+    <span class="job-card__status status--success account-row__badge">Active</span>
+    {% endif %}
+    <button type="button" class="job-card__action job-card__action--danger" hx-delete="/settings/zlib/accounts"
+      hx-vals='{{ {"email": account.email} | tojson }}' hx-swap="none"
+      hx-confirm="Remove {{ account.email }}?" title="Remove account" aria-label="Remove {{ account.email }}">
+      <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
+    </button>
+  </div>
+  {% else %}
+  <div class="search-empty">No accounts yet. Add one to search and download from Z-Library.</div>
+  {% endfor %}
+
+  <form class="account-add" hx-post="/settings/zlib/accounts" hx-swap="none" hx-indicator="this">
+    <input type="email" class="field__input" name="email" value="{{ draft_email or '' }}"
+      placeholder="reader@example.com" aria-label="Z-Library e-mail" autocomplete="username" required>
+    <input type="password" class="field__input" name="password" placeholder="Password"
+      aria-label="Z-Library password" autocomplete="new-password" required>
+    <button type="submit" class="btn btn--compact">
+      <span class="btn__label">Add</span>
+      <span class="htmx-indicator"><span class="spinner"></span></span>
+    </button>
+  </form>
+  <span class="field__hint">Adding an existing e-mail updates its password.</span>
+
+  {% if error %}
+  <div class="job-card__error" role="alert">{{ error }}</div>
+  {% endif %}
+</section>

@@ -346,22 +346,6 @@ h3 {
   gap: var(--space-lg);
 }
 
-.settings__group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  margin: 0;
-  padding: 0;
-  border: none;
-}
-
-.settings__label {
-  margin-top: var(--space-xs);
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--ink-muted);
-}
-
 .settings__check {
   margin: 0;
 }
@@ -380,6 +364,113 @@ h3 {
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-md);
+}
+
+.settings__status {
+  margin-right: auto;
+}
+
+.accounts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-lg);
+  padding-top: var(--space-lg);
+  border-top: var(--border-thin);
+}
+
+.zlib-switch[hidden] {
+  display: none;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--border-thin);
+  background: var(--surface);
+}
+
+.account-row--active {
+  background: var(--accent-light);
+}
+
+.account-row__pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.account-row__pick input {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.account-row__email {
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-row__badge {
+  font-size: 0.55rem;
+  padding: 0.1em 0.5em;
+}
+
+.account-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.account-add .field__input {
+  flex: 1 1 10rem;
+  min-width: 0;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.account-add .btn {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.zlib-switch {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.zlib-switch__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+}
+
+.zlib-switch .zlib-switch__select {
+  flex: 0 1 16rem;
+  min-width: 0;
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
+  font-size: 0.8rem;
+  cursor: pointer;
 }
 
 

@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from slugify import slugify
 
+from app.accounts import activate, get_account, list_accounts, remove_account, save_account
 from app.config import settings
 from app.db import Job, init_db, utcnow
 from app.preferences import load_preferences, preferences, save_preferences
@@ -209,26 +210,20 @@ async def index(request: Request):
             "languages": library.LANGUAGES,
             "sources": library.SOURCES,
             "formats": library.FORMATS,
+            **await zlib_context(),
         },
     )
+
+
+async def zlib_context() -> dict[str, object]:
+    return {"accounts": await list_accounts(), "active": preferences.zlib_active}
 
 
 def settings_values() -> dict[str, object]:
     return {
         "kindle_address": preferences.kindle_address,
-        "zlib_email": preferences.zlib_email,
         "show_sender_notice": preferences.show_sender_notice,
     }
-
-
-def settings_error(kindle_address: str, zlib_email: str, zlib_password: str) -> str | None:
-    if kindle_address and not EMAIL_PATTERN.match(kindle_address):
-        return "The Kindle address doesn't look like an e-mail address."
-    if zlib_email and not EMAIL_PATTERN.match(zlib_email):
-        return "The Z-Lib e-mail doesn't look like an e-mail address."
-    if zlib_email and not (zlib_password or preferences.zlib_password):
-        return "Enter the Z-Lib password."
-    return None
 
 
 def render_settings(request: Request, name: str, **context: object) -> HTMLResponse:
@@ -238,7 +233,6 @@ def render_settings(request: Request, name: str, **context: object) -> HTMLRespo
         context={
             "request": request,
             "values": settings_values(),
-            "has_password": bool(preferences.zlib_password),
             "default_kindle": preferences.kindle_address,
             "show_notice": preferences.show_sender_notice,
             **context,
@@ -247,44 +241,84 @@ def render_settings(request: Request, name: str, **context: object) -> HTMLRespo
 
 
 @app.get("/settings", response_class=HTMLResponse)
-async def settings_form(request: Request):
-    return render_settings(request, "partials/settings_form.html")
+async def settings_panel(request: Request):
+    return render_settings(request, "partials/settings_body.html", **await zlib_context())
 
 
 @app.post("/settings", response_class=HTMLResponse)
 async def save_settings(
     request: Request,
-    background_tasks: BackgroundTasks,
     kindle_address: str = Form(""),
-    zlib_email: str = Form(""),
-    zlib_password: str = Form(""),
     show_sender_notice: bool = Form(False),
 ):
-    kindle_address, zlib_email = kindle_address.strip(), zlib_email.strip()
-    error = settings_error(kindle_address, zlib_email, zlib_password)
-    if error:
-        values = {
-            "kindle_address": kindle_address,
-            "zlib_email": zlib_email,
-            "show_sender_notice": show_sender_notice,
-        }
-        return render_settings(request, "partials/settings_form.html", values=values, error=error)
+    kindle_address = kindle_address.strip()
+    if kindle_address and not EMAIL_PATTERN.match(kindle_address):
+        values = {"kindle_address": kindle_address, "show_sender_notice": show_sender_notice}
+        return render_settings(
+            request,
+            "partials/settings_form.html",
+            values=values,
+            error="The Kindle address doesn't look like an e-mail address.",
+        )
 
-    password = (zlib_password or preferences.zlib_password) if zlib_email else ""
-    account_changed = (zlib_email, password) != (
-        preferences.zlib_email,
-        preferences.zlib_password,
-    )
-    await save_preferences(
-        kindle_address=kindle_address,
-        zlib_email=zlib_email,
-        zlib_password=password,
-        show_sender_notice=show_sender_notice,
-    )
-    if account_changed:
-        await z_lib.reset()
-        background_tasks.add_task(z_lib.warm_up)
+    await save_preferences(kindle_address=kindle_address, show_sender_notice=show_sender_notice)
     return render_settings(request, "partials/settings_saved.html", saved=True, oob=True)
+
+
+def restart_zlib(background_tasks: BackgroundTasks) -> None:
+    z_lib.reset()
+    background_tasks.add_task(z_lib.warm_up)
+
+
+async def switch_zlib_account(email: str, background_tasks: BackgroundTasks) -> None:
+    if await activate(email):
+        restart_zlib(background_tasks)
+
+
+async def render_zlib(request: Request, **context: object) -> HTMLResponse:
+    return render_settings(
+        request, "partials/zlib_update.html", oob=True, **await zlib_context(), **context
+    )
+
+
+@app.post("/settings/zlib/accounts", response_class=HTMLResponse)
+async def add_zlib_account(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    email: str = Form(""),
+    password: str = Form(""),
+):
+    email = email.strip()
+    if not EMAIL_PATTERN.match(email):
+        error = "The Z-Lib e-mail doesn't look like an e-mail address."
+        return await render_zlib(request, error=error, draft_email=email)
+    if not password:
+        return await render_zlib(request, error="Enter the Z-Lib password.", draft_email=email)
+
+    await save_account(email, password)
+    if email == preferences.zlib_active:
+        restart_zlib(background_tasks)
+    elif not preferences.zlib_active:
+        await switch_zlib_account(email, background_tasks)
+    return await render_zlib(request)
+
+
+@app.post("/settings/zlib/active", response_class=HTMLResponse)
+async def choose_zlib_account(
+    request: Request, background_tasks: BackgroundTasks, email: str = Form("")
+):
+    if await get_account(email):
+        await switch_zlib_account(email, background_tasks)
+    return await render_zlib(request)
+
+
+@app.delete("/settings/zlib/accounts", response_class=HTMLResponse)
+async def delete_zlib_account(request: Request, background_tasks: BackgroundTasks, email: str = ""):
+    await remove_account(email)
+    if email == preferences.zlib_active:
+        remaining = await list_accounts()
+        await switch_zlib_account(remaining[0].email if remaining else "", background_tasks)
+    return await render_zlib(request)
 
 
 @app.post("/settings/notice/dismiss", response_class=HTMLResponse)

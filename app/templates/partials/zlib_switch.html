@@ -1,0 +1,15 @@
+<div id="zlib-switch" class="zlib-switch" {% if accounts | length < 2 %}hidden{% endif %}
+  {% if oob %}hx-swap-oob="true"{% endif %}>
+  {% if accounts | length > 1 %}
+  <label class="zlib-switch__label" for="zlib-account">
+    <i data-lucide="user-round" style="width:12px;height:12px;"></i>
+    Z-Lib account
+  </label>
+  <select class="field__input zlib-switch__select" id="zlib-account" name="email"
+    hx-post="/settings/zlib/active" hx-trigger="change" hx-swap="none">
+    {% for account in accounts %}
+    <option value="{{ account.email }}" {% if account.email == active %}selected{% endif %}>{{ account.email }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+</div>

@@ -33,6 +33,12 @@ class Preference(SQLModel, table=True):
     value: str
 
 
+class ZLibAccount(SQLModel, table=True):
+    email: str = Field(primary_key=True)
+    password: str
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 engine = create_async_engine(f"sqlite+aiosqlite:///{settings.db_path}")
 session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

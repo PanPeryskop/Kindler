@@ -9,8 +9,7 @@ from app.db import Preference, session_factory
 @dataclass
 class Preferences:
     kindle_address: str = ""
-    zlib_email: str = ""
-    zlib_password: str = ""
+    zlib_active: str = ""
     show_sender_notice: bool = True
 
 

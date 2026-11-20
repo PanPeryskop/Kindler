@@ -125,6 +125,8 @@
           <span class="field__hint">Any format - converted if needed</span>
         </form>
 
+        {% include "partials/zlib_switch.html" %}
+
         <div class="pick-bar" id="pick-bar" hidden>
           <span class="pick-bar__count" id="pick-count">0 selected</span>
           <button type="button" class="pick-bar__clear" id="pick-clear">Clear</button>
@@ -208,7 +210,9 @@
         <i data-lucide="x" style="width:16px;height:16px;"></i>
       </button>
     </div>
-    <div id="settings-body"></div>
+    <div id="settings-body">
+      <section id="zlib-accounts" hidden></section>
+    </div>
   </dialog>
 
   <script>

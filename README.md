@@ -70,10 +70,11 @@ ZLIB_MIRROR=https://z-lib.sk
 # ZLIB_TOR_PROXY=socks5://127.0.0.1:9150
 ```
 
-The default Kindle address, the Z-Lib account and the sender reminder are set
-in the app under Settings (the gear icon) and stored in the job database. A
-Z-Lib account saved there takes precedence over `ZLIB_EMAIL` / `ZLIB_PASSWORD`
-and `cookies.txt`.
+The default Kindle address, Z-Lib accounts and the sender reminder are set in
+the app under Settings (the gear icon) and stored in the job database. Several
+Z-Lib accounts can be saved; pick the active one in Settings or, with two or
+more, from the account switch under the search form. The active account takes
+precedence over `ZLIB_EMAIL` / `ZLIB_PASSWORD` and `cookies.txt`.
 
 ### 4. Running
 

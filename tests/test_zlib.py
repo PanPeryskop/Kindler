@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from app.preferences import preferences
 from app.services import z_lib
 
 COOKIES = (
@@ -395,36 +396,6 @@ async def test_search_stops_after_a_few_empty_pages(monkeypatch):
     assert len(fetched) == z_lib.MAX_PAGES_PER_SEARCH
 
 
-def test_account_from_settings_overrides_the_environment(monkeypatch):
-    monkeypatch.setattr(z_lib.settings, "zlib_email", "env@example.com")
-    monkeypatch.setattr(z_lib.settings, "zlib_password", "env-secret")
-
-    assert z_lib._credentials() == ("env@example.com", "env-secret")
-    monkeypatch.setattr(z_lib.preferences, "zlib_email", "me@example.com")
-    monkeypatch.setattr(z_lib.preferences, "zlib_password", "mine")
-    assert z_lib._credentials() == ("me@example.com", "mine")
-
-
-async def test_account_from_settings_ignores_the_cookies_file(monkeypatch, tmp_path):
-    path = tmp_path / "cookies.txt"
-    path.write_text(COOKIES)
-    monkeypatch.setattr(z_lib.settings, "zlib_cookies_file", str(path))
-    monkeypatch.setattr(z_lib.settings, "zlib_tor_proxy", None)
-    monkeypatch.setattr(z_lib.preferences, "zlib_email", "me@example.com")
-    monkeypatch.setattr(z_lib.preferences, "zlib_password", "mine")
-    opened = []
-
-    def new_http(cookies, user_agent):
-        opened.append(cookies)
-        raise RuntimeError("stop")
-
-    monkeypatch.setattr(z_lib, "_new_http", new_http)
-
-    with pytest.raises(RuntimeError, match="stop"):
-        await z_lib._open_session()
-    assert "remix_userkey" not in opened[0]
-
-
 async def test_reset_drops_the_session_and_an_opening_in_progress(monkeypatch):
     release = asyncio.Event()
     stale = FakeHttp()
@@ -439,9 +410,58 @@ async def test_reset_drops_the_session_and_an_opening_in_progress(monkeypatch):
     waiting = asyncio.create_task(z_lib._get_session())
     await asyncio.sleep(0)
 
-    await z_lib.reset()
+    z_lib.reset()
     release.set()
     await waiting
 
     assert z_lib._session is None
     assert [session.http for session in retired] == [stale]
+
+
+@pytest.mark.usefixtures("clean_db")
+async def test_active_account_overrides_the_environment(monkeypatch):
+    from app.accounts import save_account
+
+    monkeypatch.setattr(z_lib.settings, "zlib_email", "env@example.com")
+    monkeypatch.setattr(z_lib.settings, "zlib_password", "env-secret")
+    assert await z_lib._credentials() == ("env@example.com", "env-secret")
+
+    await save_account("me@example.com", "mine")
+    monkeypatch.setattr(preferences, "zlib_active", "me@example.com")
+    assert await z_lib._credentials() == ("me@example.com", "mine")
+
+
+@pytest.mark.usefixtures("clean_db")
+async def test_active_account_ignores_the_cookies_file(monkeypatch, tmp_path):
+    from app.accounts import save_account
+
+    path = tmp_path / "cookies.txt"
+    path.write_text(COOKIES)
+    monkeypatch.setattr(z_lib.settings, "zlib_cookies_file", str(path))
+    monkeypatch.setattr(z_lib.settings, "zlib_tor_proxy", None)
+    await save_account("me@example.com", "mine")
+    monkeypatch.setattr(preferences, "zlib_active", "me@example.com")
+    opened = []
+
+    def new_http(cookies, user_agent):
+        opened.append(cookies)
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(z_lib, "_new_http", new_http)
+
+    with pytest.raises(RuntimeError, match="stop"):
+        await z_lib._open_session()
+    assert "remix_userkey" not in opened[0]
+
+
+async def test_reset_retires_the_current_session_instead_of_closing_it(monkeypatch):
+    current = z_lib._ZSession(http=FakeHttp(), mirror="https://z-lib.sk")
+    retired = []
+    monkeypatch.setattr(z_lib, "_session", current)
+    monkeypatch.setattr(z_lib, "_retire", retired.append)
+
+    z_lib.reset()
+
+    assert z_lib._session is None
+    assert retired == [current]
+    assert not current.http.closed

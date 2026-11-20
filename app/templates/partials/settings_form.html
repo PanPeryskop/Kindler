@@ -8,27 +8,6 @@
       value="{{ values.kindle_address }}" placeholder="you_123@kindle.com" autocomplete="off">
   </div>
 
-  <fieldset class="settings__group">
-    <legend class="field__label">
-      <i data-lucide="library" style="width:12px;height:12px;"></i>
-      Z-Library account
-    </legend>
-    <label class="settings__label" for="settings-zlib-email">E-mail</label>
-    <input type="email" class="field__input" id="settings-zlib-email" name="zlib_email"
-      value="{{ values.zlib_email }}" placeholder="reader@example.com" autocomplete="username">
-    <label class="settings__label" for="settings-zlib-password">Password</label>
-    <input type="password" class="field__input" id="settings-zlib-password" name="zlib_password"
-      placeholder="{{ 'Saved, leave blank to keep' if has_password else 'Password' }}"
-      autocomplete="new-password">
-    <span class="field__hint">
-      {% if values.zlib_email %}
-      Clear the e-mail to remove the account.
-      {% else %}
-      Needed to search and download from Z-Library.
-      {% endif %}
-    </span>
-  </fieldset>
-
   <label class="check settings__check">
     <input type="checkbox" name="show_sender_notice" value="true" {% if values.show_sender_notice %}checked{% endif %}>
     <span class="check__box">
@@ -37,17 +16,15 @@
     <span class="check__label">Show the sender whitelist reminder</span>
   </label>
 
-  {% if error %}
-  <div class="job-card__error" role="alert">{{ error }}</div>
-  {% elif saved %}
-  <div class="settings__saved" role="status">
-    <i data-lucide="check" style="width:14px;height:14px;"></i>
-    Saved
-  </div>
-  {% endif %}
-
   <div class="settings__actions">
-    <button type="button" class="pick-bar__clear" data-close-dialog>Close</button>
+    {% if error %}
+    <div class="job-card__error settings__status" role="alert">{{ error }}</div>
+    {% elif saved %}
+    <div class="settings__saved settings__status" role="status">
+      <i data-lucide="check" style="width:14px;height:14px;"></i>
+      Saved
+    </div>
+    {% endif %}
     <button type="submit" class="btn btn--compact">
       <span class="btn__label">Save</span>
       <span class="htmx-indicator"><span class="spinner"></span></span>

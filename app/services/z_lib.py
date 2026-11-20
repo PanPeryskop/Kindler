@@ -16,8 +16,8 @@ from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.exceptions import RequestException
 
+from app.accounts import active_account
 from app.config import settings
-from app.preferences import preferences
 
 ZLIB_TOR_DOMAIN = "http://bookszlibb74ugqojhzhg2a63w5i2atv5bqarulgczawnbmsb6s6qead.onion"
 ZLIB_LANGUAGES = {
@@ -88,14 +88,15 @@ def _session_timeout() -> int:
     return _timeout() * 4 + CHALLENGE_TIMEOUT_SECONDS
 
 
-def _credentials() -> tuple[str, str]:
-    if preferences.zlib_email:
-        return preferences.zlib_email, preferences.zlib_password
+async def _credentials() -> tuple[str, str]:
+    account = await active_account()
+    if account:
+        return account.email, account.password
     return settings.zlib_email or "", settings.zlib_password or ""
 
 
-def _configured() -> bool:
-    return all(_credentials()) or Path(settings.zlib_cookies_file).is_file()
+async def _configured() -> bool:
+    return all(await _credentials()) or Path(settings.zlib_cookies_file).is_file()
 
 
 def _mirror() -> str:
@@ -247,7 +248,7 @@ async def _get_text(http: AsyncSession, url: str) -> tuple[int, str]:
 
 
 async def _login(http: AsyncSession, mirror: str) -> None:
-    email, password = _credentials()
+    email, password = await _credentials()
     if not email or not password:
         raise RuntimeError("Z-Lib needs an account: add it in Settings or provide cookies.txt.")
 
@@ -277,7 +278,7 @@ async def _login(http: AsyncSession, mirror: str) -> None:
 
 async def _open_session() -> _ZSession:
     mirror = _mirror()
-    cookies = {} if preferences.zlib_email else _load_cookies(mirror)
+    cookies = {} if await active_account() else _load_cookies(mirror)
     cleared, user_agent = _load_state(mirror)
     http = _new_http({**cookies, **cleared}, user_agent)
     try:
@@ -333,11 +334,11 @@ async def _get_session() -> _ZSession:
     return await asyncio.shield(_opening)
 
 
-async def reset() -> None:
+def reset() -> None:
     global _session, _opening
     session, _session, _opening = _session, None, None
     if session is not None:
-        await session.http.close()
+        _retire(session)
 
 
 async def _reset_session(stale: _ZSession) -> None:
@@ -377,7 +378,7 @@ def _retire(session: _ZSession) -> None:
 
 
 async def warm_up() -> None:
-    if not _configured():
+    if not await _configured():
         return
     try:
         await _get_session()

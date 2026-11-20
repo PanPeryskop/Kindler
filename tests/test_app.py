@@ -862,66 +862,6 @@ async def test_invalid_settings_are_reported_and_not_saved():
     assert "hx-swap-oob" not in response.text
 
 
-async def test_new_zlib_account_needs_a_password():
-    from app.preferences import preferences
-
-    response = await post_settings(zlib_email="me@example.com")
-
-    assert "Enter the Z-Lib password" in response.text
-    assert preferences.zlib_email == ""
-
-
-async def test_zlib_account_change_restarts_the_session(monkeypatch):
-    from app.preferences import preferences
-    from app.services import z_lib
-
-    calls = []
-
-    async def reset():
-        calls.append("reset")
-
-    async def warm_up():
-        calls.append("warm_up")
-
-    monkeypatch.setattr(z_lib, "reset", reset)
-    monkeypatch.setattr(z_lib, "warm_up", warm_up)
-
-    await post_settings(zlib_email="me@example.com", zlib_password="secret")
-    await post_settings(zlib_email="me@example.com", zlib_password="")
-
-    assert (preferences.zlib_email, preferences.zlib_password) == ("me@example.com", "secret")
-    assert calls == ["reset", "warm_up"]
-
-
-async def test_clearing_the_zlib_email_removes_the_account(monkeypatch):
-    from app.preferences import preferences, save_preferences
-    from app.services import z_lib
-
-    async def noop():
-        pass
-
-    monkeypatch.setattr(z_lib, "reset", noop)
-    monkeypatch.setattr(z_lib, "warm_up", noop)
-    await save_preferences(zlib_email="me@example.com", zlib_password="secret")
-
-    await post_settings(zlib_email="")
-
-    assert (preferences.zlib_email, preferences.zlib_password) == ("", "")
-
-
-async def test_settings_form_never_shows_the_saved_password():
-    from app.preferences import save_preferences
-
-    await save_preferences(zlib_email="me@example.com", zlib_password="secret")
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/settings")
-
-    assert 'value="me@example.com"' in response.text
-    assert "secret" not in response.text
-    assert "leave blank to keep" in response.text
-
-
 async def test_dismissed_notice_stays_hidden():
     from app.preferences import preferences
 
@@ -948,3 +888,134 @@ async def test_settings_form_never_reveals_the_environment_account(monkeypatch):
 
     assert "owner@example.com" not in response.text
     assert ".env" not in response.text
+
+
+@pytest.fixture
+def zlib_restarts(monkeypatch):
+    from app.services import z_lib
+
+    calls = []
+
+    async def warm_up():
+        calls.append("warm_up")
+
+    monkeypatch.setattr(z_lib, "reset", lambda: calls.append("reset"))
+    monkeypatch.setattr(z_lib, "warm_up", warm_up)
+    return calls
+
+
+async def zlib_request(method: str, url: str, **kwargs):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.request(method, url, **kwargs)
+
+
+async def add_account(email: str, password: str):
+    return await zlib_request(
+        "POST", "/settings/zlib/accounts", data={"email": email, "password": password}
+    )
+
+
+async def test_first_account_becomes_active(zlib_restarts):
+    from app.accounts import list_accounts
+    from app.preferences import preferences
+
+    response = await add_account("one@example.com", "pass-1")
+
+    assert [account.email for account in await list_accounts()] == ["one@example.com"]
+    assert preferences.zlib_active == "one@example.com"
+    assert zlib_restarts == ["reset", "warm_up"]
+    assert 'id="zlib-accounts"' in response.text
+    assert 'id="zlib-switch"' in response.text
+
+
+async def test_more_accounts_keep_the_active_one_until_switched(zlib_restarts):
+    from app.preferences import preferences
+
+    await add_account("one@example.com", "pass-1")
+    response = await add_account("two@example.com", "pass-1")
+
+    assert preferences.zlib_active == "one@example.com"
+    assert zlib_restarts == ["reset", "warm_up"]
+    assert '<option value="two@example.com" >' in response.text
+    assert 'id="zlib-account"' in response.text
+
+
+async def test_switching_accounts_restarts_the_session(zlib_restarts):
+    from app.preferences import preferences
+
+    await add_account("one@example.com", "pass-1")
+    await add_account("two@example.com", "pass-1")
+    zlib_restarts.clear()
+
+    response = await zlib_request(
+        "POST", "/settings/zlib/active", data={"email": "two@example.com"}
+    )
+    await zlib_request("POST", "/settings/zlib/active", data={"email": "two@example.com"})
+    await zlib_request("POST", "/settings/zlib/active", data={"email": "ghost@example.com"})
+
+    assert preferences.zlib_active == "two@example.com"
+    assert zlib_restarts == ["reset", "warm_up"]
+    assert '<option value="two@example.com" selected>' in response.text
+
+
+async def test_removing_the_active_account_falls_back_to_the_next(zlib_restarts):
+    from app.accounts import list_accounts
+    from app.preferences import preferences
+
+    await add_account("one@example.com", "pass-1")
+    await add_account("two@example.com", "pass-1")
+
+    await zlib_request("DELETE", "/settings/zlib/accounts", params={"email": "one@example.com"})
+    assert preferences.zlib_active == "two@example.com"
+
+    response = await zlib_request(
+        "DELETE", "/settings/zlib/accounts", params={"email": "two@example.com"}
+    )
+    assert preferences.zlib_active == ""
+    assert await list_accounts() == []
+    assert "No accounts yet" in response.text
+
+
+async def test_readding_an_account_updates_its_password(zlib_restarts):
+    from app.accounts import get_account
+
+    await add_account("one@example.com", "old")
+    zlib_restarts.clear()
+
+    await add_account(" one@example.com ", "new")
+
+    assert (await get_account("one@example.com")).password == "new"
+    assert zlib_restarts == ["reset", "warm_up"]
+
+
+async def test_invalid_accounts_are_refused(zlib_restarts):
+    from app.accounts import list_accounts
+
+    bad_email = await add_account("not-an-address", "pass-1")
+    no_password = await add_account("one@example.com", "")
+
+    assert "look like an e-mail address" in bad_email.text
+    assert "Enter the Z-Lib password" in no_password.text
+    assert 'value="one@example.com"' in no_password.text
+    assert await list_accounts() == []
+    assert zlib_restarts == []
+
+
+async def test_settings_never_show_account_passwords(zlib_restarts):
+    await add_account("one@example.com", "hunter2")
+
+    response = await zlib_request("GET", "/settings")
+
+    assert "one@example.com" in response.text
+    assert "hunter2" not in response.text
+
+
+async def test_account_switch_appears_on_the_page_with_two_accounts(zlib_restarts):
+    one = await zlib_request("GET", "/")
+    await add_account("one@example.com", "pass-1")
+    await add_account("two@example.com", "pass-1")
+    two = await zlib_request("GET", "/")
+
+    assert 'id="zlib-account"' not in one.text
+    assert 'id="zlib-account"' in two.text
