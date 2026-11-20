@@ -194,6 +194,7 @@ async def test_library_download_creates_review_job(tmp_path: Path, monkeypatch):
     job = (await job_queue.with_status("review"))[0]
     assert job.filename == "quo-vadis.epub"
     assert job.title == "Zebrane Opowiadania"
+    assert (job.source, job.ref) == ("wolnelektury", "quo-vadis")
     assert Path(job.tmp_path).exists()
     Path(job.tmp_path).unlink(missing_ok=True)
 
@@ -693,3 +694,127 @@ async def test_index_busts_the_stylesheet_cache():
     assert static_url("css/style.css") in response.text
     assert "/static/css/style.css?v=" in response.text
     assert "lucide@latest" not in response.text
+
+
+def catalogue_result(source: str, ref: str, title: str, formats: dict[str, str]):
+    from app.services import library
+
+    return library.SearchResult(
+        source=source, ref=ref, title=title, author="A", cover_url=None, formats=formats
+    )
+
+
+async def search_with(monkeypatch, results):
+    from app.services import library
+
+    async def fake_search(query, language="", source="", book_format="", cursor=None):
+        return library.SearchPage(results)
+
+    monkeypatch.setattr(library, "search", fake_search)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.get("/search", params={"q": "x"})
+
+
+def result_block(html: str, title: str) -> str:
+    start = html.index(f'search-result__title">{title}<')
+    end = html.find('<div class="search-result">', start)
+    return html[start : end if end != -1 else None]
+
+
+async def test_search_marks_books_that_were_already_sent(monkeypatch):
+    await job_queue.add("dune.epub", status="sent", source="zlib", ref="dune1", title="Diuna")
+    await job_queue.add("quo.epub", status="sent", title="  Quo   VADIS ")
+
+    response = await search_with(
+        monkeypatch,
+        [
+            catalogue_result("zlib", "dune1", "Dune", {"epub": ""}),
+            catalogue_result("wolnelektury", "quo-vadis", "Quo vadis", {"epub": ""}),
+            catalogue_result("gutenberg", "1", "Dracula", {"epub": ""}),
+        ],
+    )
+
+    assert "search-result__sent" in result_block(response.text, "Dune")
+    assert "search-result__sent" in result_block(response.text, "Quo vadis")
+    assert "search-result__sent" not in result_block(response.text, "Dracula")
+
+
+async def test_search_results_offer_a_picker_with_the_preferred_format(monkeypatch):
+    response = await search_with(
+        monkeypatch,
+        [
+            catalogue_result("gutenberg", "1", "Dracula", {"mobi": "", "epub": ""}),
+            catalogue_result("gutenberg", "2", "Emma", {"pdf": "", "mobi": ""}),
+            catalogue_result("gutenberg", "3", "Nothing", {}),
+        ],
+    )
+
+    assert 'data-format="epub"' in result_block(response.text, "Dracula")
+    assert 'data-format="pdf"' in result_block(response.text, "Emma")
+    assert "search-result__select" not in result_block(response.text, "Nothing")
+
+
+async def test_finished_job_records_when_it_was_sent(tmp_path: Path, monkeypatch):
+    from app import main
+
+    async def fake_send(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(main, "send_to_kindle", fake_send)
+    job_id, _ = await make_review_job(tmp_path, status="pending")
+
+    await main.process_file_job(job_id)
+
+    job = await job_queue.get(job_id)
+    assert job.status == "sent"
+    assert job.sent_at is not None
+
+
+async def test_removing_a_sent_card_keeps_it_in_history(tmp_path: Path):
+    job_id, _ = await make_review_job(tmp_path, status="sent")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        removed = await client.delete(f"/jobs/{job_id}")
+        history = await client.get("/history")
+
+    assert removed.text == ""
+    assert await job_queue.get(job_id) is not None
+    assert f'id="history-{job_id}"' in history.text
+    assert "Upload" not in history.text
+
+
+async def test_history_labels_uploaded_files():
+    await job_queue.add("own.epub", status="sent", source="upload", title="Own book")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        history = await client.get("/history")
+
+    assert "Upload" in history.text
+
+
+async def test_history_can_forget_a_sent_book_but_not_an_active_job(tmp_path: Path):
+    sent_id, _ = await make_review_job(tmp_path, status="sent")
+    active = await job_queue.add("x.epub", status="sending")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.delete(f"/history/{sent_id}")
+        await client.delete(f"/history/{active.id}")
+        history = await client.get("/history")
+
+    assert await job_queue.get(sent_id) is None
+    assert await job_queue.get(active.id) is not None
+    assert "Nothing sent yet." in history.text
+
+
+async def test_index_offers_batch_actions_and_history():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/")
+
+    assert 'id="send-all"' in response.text
+    assert 'id="pick-bar"' in response.text
+    assert 'hx-get="/history"' in response.text

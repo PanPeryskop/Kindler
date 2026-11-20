@@ -1,0 +1,19 @@
+{% for job in jobs %}
+<div class="history-item" id="history-{{ job.id }}">
+  <div class="history-item__body">
+    <span class="history-item__title" title="{{ job.title or job.filename }}">{{ job.title or job.filename }}</span>
+    <span class="history-item__meta">
+      {{ job.author or 'Unknown Author' }}
+      {%- if job.source %} &middot; {{ sources.get(job.source, 'Upload') }}{% endif %}
+      &middot; {{ (job.sent_at or job.created_at).strftime('%Y-%m-%d') }}
+    </span>
+  </div>
+  <button type="button" class="job-card__action job-card__action--danger" hx-delete="/history/{{ job.id }}"
+    hx-target="#history-{{ job.id }}" hx-swap="outerHTML" title="Remove from history"
+    aria-label="Remove from history">
+    <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
+  </button>
+</div>
+{% else %}
+<div class="search-empty">Nothing sent yet.</div>
+{% endfor %}

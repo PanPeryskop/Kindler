@@ -1,3 +1,6 @@
+import asyncio
+from pathlib import Path
+
 import pytest
 
 from app.services import z_lib
@@ -114,7 +117,6 @@ async def test_fetch_solves_the_check_again_when_it_returns(monkeypatch):
     async def get_text(http, url):
         return next(pages)
 
-    monkeypatch.setattr(z_lib, "_session", None)
     monkeypatch.setattr(z_lib, "_open_session", open_session)
     monkeypatch.setattr(z_lib, "_get_text", get_text)
 
@@ -122,10 +124,156 @@ async def test_fetch_solves_the_check_again_when_it_returns(monkeypatch):
     assert len(opened) == 2
 
 
-async def test_keep_warm_is_idle_without_tor(monkeypatch):
+class FakeHttp:
+    def __init__(self):
+        self.closed = False
+
+    async def close(self):
+        self.closed = True
+
+
+@pytest.fixture(autouse=True)
+def fresh_session(monkeypatch, tmp_path):
+    monkeypatch.setattr(z_lib, "_session", None)
+    monkeypatch.setattr(z_lib, "_opening", None)
+    monkeypatch.setattr(z_lib.settings, "zlib_state_file", str(tmp_path / "state.json"))
+
+
+async def test_concurrent_searches_share_one_session_opening(monkeypatch):
+    opened = []
+
+    async def open_session():
+        opened.append(1)
+        await asyncio.sleep(0.01)
+        return z_lib._ZSession(http=FakeHttp(), mirror="https://z-lib.sk")
+
+    monkeypatch.setattr(z_lib, "_open_session", open_session)
+
+    first, second = await asyncio.gather(z_lib._get_session(), z_lib._get_session())
+
+    assert first is second
+    assert len(opened) == 1
+
+
+async def test_cancelled_search_keeps_the_session_opening(monkeypatch):
+    release = asyncio.Event()
+
+    async def open_session():
+        await release.wait()
+        return z_lib._ZSession(http=FakeHttp(), mirror="https://z-lib.sk")
+
+    monkeypatch.setattr(z_lib, "_open_session", open_session)
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(z_lib._get_session(), timeout=0.01)
+    release.set()
+    session = await z_lib._get_session()
+
+    assert z_lib._session is session
+
+
+async def test_slow_session_opening_reports_a_readable_error(monkeypatch):
+    async def open_session():
+        await asyncio.sleep(1)
+
+    monkeypatch.setattr(z_lib, "_open_session", open_session)
+    monkeypatch.setattr(z_lib, "_session_timeout", lambda: 0.01)
+
+    with pytest.raises(z_lib.ZLibraryUnreachable, match="took too long"):
+        await z_lib._get_session()
+    assert z_lib._opening is None
+
+
+async def test_fetch_retries_once_on_a_network_error(monkeypatch):
+    sessions = []
+    answers = iter([z_lib.ZLibraryUnreachable("reset"), (200, "<div>ok</div>")])
+
+    async def open_session():
+        sessions.append(z_lib._ZSession(http=FakeHttp(), mirror="https://z-lib.sk"))
+        return sessions[-1]
+
+    async def get_text(http, url):
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(z_lib, "_open_session", open_session)
+    monkeypatch.setattr(z_lib, "_get_text", get_text)
+
+    assert await z_lib._fetch("https://z-lib.sk/s/x") == "<div>ok</div>"
+    assert len(sessions) == 2
+    assert sessions[0].http.closed
+
+
+async def test_fetch_gives_up_after_a_second_network_error(monkeypatch):
+    async def open_session():
+        return z_lib._ZSession(http=FakeHttp(), mirror="https://z-lib.sk")
+
+    async def get_text(http, url):
+        raise z_lib.ZLibraryUnreachable("Cannot reach Z-Library")
+
+    monkeypatch.setattr(z_lib, "_open_session", open_session)
+    monkeypatch.setattr(z_lib, "_get_text", get_text)
+
+    with pytest.raises(z_lib.ZLibraryUnreachable, match="Cannot reach"):
+        await z_lib._fetch("https://z-lib.sk/s/x")
+
+
+def test_browser_check_state_is_reused_only_for_the_same_mirror():
+    z_lib._save_state("https://z-lib.sk", {"diamwall": "ok", "remix_userkey": "secret"}, "Chrome/1")
+
+    assert z_lib._load_state("https://z-lib.sk") == ({"diamwall": "ok"}, "Chrome/1")
+    assert z_lib._load_state("https://other.example") == ({}, z_lib.DEFAULT_USER_AGENT)
+
+
+def test_corrupt_browser_check_state_is_ignored():
+    Path(z_lib.settings.zlib_state_file).write_text("{not json", encoding="utf-8")
+
+    assert z_lib._load_state("https://z-lib.sk") == ({}, z_lib.DEFAULT_USER_AGENT)
+
+
+async def test_keep_warm_is_idle_when_zlib_is_not_configured(monkeypatch, tmp_path):
     monkeypatch.setattr(z_lib.settings, "zlib_tor_proxy", None)
+    monkeypatch.setattr(z_lib.settings, "zlib_email", None)
+    monkeypatch.setattr(z_lib.settings, "zlib_cookies_file", str(tmp_path / "none.txt"))
+
+    async def open_session():
+        raise AssertionError("should not open a session")
+
+    monkeypatch.setattr(z_lib, "_open_session", open_session)
 
     await z_lib.keep_warm()
+
+
+async def test_keep_warm_opens_a_session_once_without_tor(monkeypatch):
+    monkeypatch.setattr(z_lib.settings, "zlib_tor_proxy", None)
+    monkeypatch.setattr(z_lib.settings, "zlib_email", "reader@example.com")
+    monkeypatch.setattr(z_lib.settings, "zlib_password", "secret")
+
+    async def open_session():
+        return z_lib._ZSession(http=FakeHttp(), mirror="https://z-lib.sk")
+
+    monkeypatch.setattr(z_lib, "_open_session", open_session)
+
+    await z_lib.keep_warm()
+
+    assert z_lib._session is not None
+
+
+async def test_keep_warm_logs_instead_of_crashing(monkeypatch, caplog):
+    monkeypatch.setattr(z_lib.settings, "zlib_tor_proxy", None)
+    monkeypatch.setattr(z_lib.settings, "zlib_email", "reader@example.com")
+    monkeypatch.setattr(z_lib.settings, "zlib_password", "secret")
+
+    async def open_session():
+        raise z_lib.ZLibraryBlocked("browser check")
+
+    monkeypatch.setattr(z_lib, "_open_session", open_session)
+
+    await z_lib.keep_warm()
+
+    assert "warm-up failed" in caplog.text
 
 
 def search_page(cards: int, pages_total: int, start: int = 0) -> str:

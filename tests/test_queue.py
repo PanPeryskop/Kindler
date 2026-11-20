@@ -2,8 +2,9 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from sqlalchemy import inspect
 
-from app.db import utcnow
+from app.db import engine, init_db, utcnow
 from app.main import discard_abandoned_uploads, fail_interrupted_jobs
 from app.queue import JobQueue
 
@@ -91,3 +92,31 @@ async def test_interrupted_jobs_are_failed_on_restart(tmp_path: Path):
     assert not leftover.exists()
     assert (await queue.get(active.id)).status == "failed"
     assert (await queue.get(done.id)).status == "sent"
+
+
+async def test_init_db_adds_columns_missing_from_an_older_database():
+    async with engine.begin() as connection:
+        await connection.exec_driver_sql("DROP TABLE job")
+        await connection.exec_driver_sql(
+            "CREATE TABLE job (id VARCHAR PRIMARY KEY, filename VARCHAR NOT NULL, "
+            "status VARCHAR NOT NULL, created_at DATETIME NOT NULL)"
+        )
+
+    await init_db()
+
+    async with engine.connect() as connection:
+        columns = await connection.run_sync(
+            lambda sync: {column["name"] for column in inspect(sync).get_columns("job")}
+        )
+    assert {"source", "ref", "sent_at", "title", "cover"} <= columns
+    job = await queue.add("book.epub", source="zlib", ref="abc")
+    assert (await queue.get(job.id)).ref == "abc"
+
+
+async def test_sent_lists_only_sent_jobs_newest_first():
+    older = await queue.add("old.epub", status="sent", sent_at=utcnow() - timedelta(days=2))
+    newer = await queue.add("new.epub", status="sent", sent_at=utcnow())
+    await queue.add("draft.epub", status="review")
+
+    assert [job.id for job in await queue.sent()] == [newer.id, older.id]
+    assert [job.id for job in await queue.sent(limit=1)] == [newer.id]

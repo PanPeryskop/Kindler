@@ -235,4 +235,5 @@ __marimo__/
 
 # Local secrets and editor config
 cookies.txt
+zlib_state.json
 launch.json

@@ -133,6 +133,15 @@
           <span class="field__hint">Any format &mdash; converted if needed</span>
         </form>
 
+        <div class="pick-bar" id="pick-bar" hidden>
+          <span class="pick-bar__count" id="pick-count">0 selected</span>
+          <button type="button" class="pick-bar__clear" id="pick-clear">Clear</button>
+          <button type="button" class="btn btn--compact" id="pick-add">
+            <span class="btn__label">Add to queue</span>
+            <i data-lucide="list-plus" style="width:16px;height:16px;"></i>
+          </button>
+        </div>
+
         <div class="search-results" id="search-results"></div>
       </div>
 
@@ -174,10 +183,24 @@
           <i data-lucide="layers" style="width:14px;height:14px;color:var(--ink-muted);"></i>
           <span class="jobs-section__title">Queue</span>
           <span class="jobs-section__count" id="jobs-count">0</span>
+          <button type="button" class="jobs-section__send-all" id="send-all" hidden>
+            Send all <span id="send-all-count">0</span>
+            <i data-lucide="send" style="width:12px;height:12px;"></i>
+          </button>
         </div>
         <div class="jobs-list" id="jobs-list">
         </div>
       </section>
+
+      <details class="history" hx-get="/history" hx-trigger="toggle[this.open]"
+        hx-target="#history-list">
+        <summary class="jobs-section__header history__summary">
+          <i data-lucide="history" style="width:14px;height:14px;color:var(--ink-muted);"></i>
+          <span class="jobs-section__title">Sent history</span>
+          <i data-lucide="chevron-down" class="history__chevron" style="width:14px;height:14px;"></i>
+        </summary>
+        <div class="history__list" id="history-list"></div>
+      </details>
       </div>
       </div>
 
@@ -284,11 +307,56 @@
       if (formatsDisplay) formatsDisplay.style.display = '';
     }
 
-    function updateJobCount() {
-      const count = document.querySelectorAll('#jobs-list .job-card').length;
-      const counter = document.getElementById('jobs-count');
-      if (counter) counter.textContent = count;
+    const jobsList = document.getElementById('jobs-list');
+    const sendAll = document.getElementById('send-all');
+
+    function reviewForms() {
+      return Array.from(jobsList.querySelectorAll('form.job-card--review'));
     }
+
+    function updateJobCount() {
+      document.getElementById('jobs-count').textContent = jobsList.querySelectorAll('.job-card').length;
+      const reviewCount = reviewForms().length;
+      sendAll.hidden = reviewCount < 2;
+      document.getElementById('send-all-count').textContent = reviewCount;
+    }
+
+    sendAll.addEventListener('click', () => {
+      reviewForms().forEach((form) => form.requestSubmit());
+    });
+
+    const searchResults = document.getElementById('search-results');
+    const pickBar = document.getElementById('pick-bar');
+
+    function pickedResults() {
+      return Array.from(searchResults.querySelectorAll('.search-result__select:checked'));
+    }
+
+    function updatePickBar() {
+      const count = pickedResults().length;
+      pickBar.hidden = count === 0;
+      document.getElementById('pick-count').textContent = `${count} selected`;
+    }
+
+    searchResults.addEventListener('change', (event) => {
+      if (event.target.matches('.search-result__select')) updatePickBar();
+    });
+
+    document.getElementById('pick-add').addEventListener('click', () => {
+      pickedResults().forEach((input) => {
+        const result = input.closest('.search-result');
+        result.querySelector(`.format-btn[value="${input.dataset.format}"]`).click();
+        input.checked = false;
+      });
+      updatePickBar();
+    });
+
+    document.getElementById('pick-clear').addEventListener('click', () => {
+      pickedResults().forEach((input) => { input.checked = false; });
+      updatePickBar();
+    });
+
+    searchResults.addEventListener('htmx:afterSettle', updatePickBar);
 
     document.addEventListener('click', (event) => {
       document.querySelectorAll('.job-menu[open]').forEach((menu) => {
@@ -296,8 +364,7 @@
       });
     });
 
-    new MutationObserver(updateJobCount)
-      .observe(document.getElementById('jobs-list'), { childList: true });
+    new MutationObserver(updateJobCount).observe(jobsList, { childList: true });
 
     document.addEventListener('DOMContentLoaded', updateJobCount);
   </script>

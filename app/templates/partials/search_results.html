@@ -4,6 +4,7 @@
 <div class="search-empty">Nothing found for &ldquo;{{ query }}&rdquo;.</div>
 {% else %}
 {% for result in results %}
+{% set sent_at = sent.get(result.source ~ ':' ~ result.ref) %}
 <div class="search-result">
   {% if result.cover_url %}
   <img class="search-result__cover" src="{{ result.cover_url }}" alt="" loading="lazy">
@@ -14,10 +15,16 @@
   <div class="search-result__body">
     <div class="search-result__title">{{ result.title }}</div>
     <div class="search-result__author">{{ result.author }}</div>
-    <span class="search-result__source">
-      {{ sources.get(result.source, result.source) }}
-      {%- if result.language %} &middot; {{ result.language }}{% endif %}
-    </span>
+    <div class="search-result__tags">
+      <span class="search-result__source">
+        {{ sources.get(result.source, result.source) }}
+        {%- if result.language %} &middot; {{ result.language }}{% endif %}
+      </span>
+      {% if sent_at %}
+      <span class="job-card__status status--success search-result__sent"
+        title="Sent on {{ sent_at.strftime('%Y-%m-%d') }}">Sent</span>
+      {% endif %}
+    </div>
 
     <form class="search-result__formats" hx-post="/library/download" hx-target="#jobs-list"
       hx-swap="afterbegin" hx-indicator="closest .search-result"
@@ -30,6 +37,16 @@
       <span class="htmx-indicator"><span class="spinner"></span></span>
     </form>
   </div>
+
+  {% if result.formats %}
+  <label class="check search-result__pick" title="Select for batch download">
+    <input type="checkbox" class="search-result__select" aria-label="Select {{ result.title }}"
+      data-format="{{ 'epub' if 'epub' in result.formats else result.formats | list | first }}">
+    <span class="check__box">
+      <i data-lucide="check" class="check__mark" style="width:14px;height:14px;"></i>
+    </span>
+  </label>
+  {% endif %}
 </div>
 {% endfor %}
 {% endif %}

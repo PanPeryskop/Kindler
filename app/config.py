@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     zlib_password: str | None = None
     zlib_mirror: str = "https://z-lib.sk"
     zlib_cookies_file: str = "cookies.txt"
+    zlib_state_file: str = "zlib_state.json"
     zlib_tor_proxy: str | None = None
 
     @property

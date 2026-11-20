@@ -1,7 +1,7 @@
 import uuid
 from datetime import timedelta
 
-from sqlmodel import select
+from sqlmodel import func, select
 
 from app.db import Job, session_factory, utcnow
 
@@ -44,6 +44,13 @@ class JobQueue:
     async def with_status(self, *statuses: str) -> list[Job]:
         async with session_factory() as session:
             result = await session.exec(select(Job).where(Job.status.in_(statuses)))
+            return list(result)
+
+    async def sent(self, limit: int | None = None) -> list[Job]:
+        sent_at = func.coalesce(Job.sent_at, Job.created_at)
+        query = select(Job).where(Job.status == "sent").order_by(sent_at.desc()).limit(limit)
+        async with session_factory() as session:
+            result = await session.exec(query)
             return list(result)
 
     async def older_than(self, status: str, age: timedelta) -> list[Job]:

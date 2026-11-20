@@ -6,7 +6,7 @@ import logging
 import shutil
 import tempfile
 from contextlib import asynccontextmanager, suppress
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from slugify import slugify
 
 from app.config import settings
-from app.db import Job, init_db
+from app.db import Job, init_db, utcnow
 from app.queue import ACTIVE_STATUSES, JobQueue
 from app.services import library, z_lib
 from app.services.convert import CalibreConverter, options_for, presets_for
@@ -31,6 +31,7 @@ REVIEW_TTL = timedelta(hours=6)
 NATIVE_TYPES = ("epub", "pdf")
 CLEANUP_INTERVAL_SECONDS = 900
 MAX_COVER_BYTES = 2 * 1024 * 1024
+HISTORY_LIMIT = 100
 APP_DIR = Path(__file__).parent
 STATIC_DIR = APP_DIR / "static"
 
@@ -100,18 +101,40 @@ def job_card_context(job: Job) -> dict:
         "downloadable": downloadable,
         "presets": presets_for(Path(job.filename).suffix) if downloadable else {},
     }
-    digest = hashlib.sha1(json.dumps(context, sort_keys=True).encode()).hexdigest()
-    return {**context, "version": digest[:12]}
+    payload = json.dumps(context, sort_keys=True).encode()
+    return {**context, "version": hashlib.blake2b(payload, digest_size=6).hexdigest()}
 
 
 def render_card(request: Request, context: dict) -> str:
-    return templates.get_template("partials/job_card.html").render(
-        {"request": request, **context}
-    )
+    return templates.get_template("partials/job_card.html").render({"request": request, **context})
 
 
 def render_job_card(request: Request, job: Job) -> str:
     return render_card(request, job_card_context(job))
+
+
+def title_key(title: str | None) -> str:
+    return " ".join((title or "").casefold().split())
+
+
+async def sent_marks(results: list[library.SearchResult]) -> dict[str, datetime]:
+    if not results:
+        return {}
+    by_ref: dict[tuple[str | None, str | None], datetime] = {}
+    by_title: dict[str, datetime] = {}
+    for job in await job_queue.sent():
+        sent_at = job.sent_at or job.created_at
+        if job.ref:
+            by_ref.setdefault((job.source, job.ref), sent_at)
+        if job.title:
+            by_title.setdefault(title_key(job.title), sent_at)
+
+    marks = {}
+    for result in results:
+        sent_at = by_ref.get((result.source, result.ref)) or by_title.get(title_key(result.title))
+        if sent_at:
+            marks[f"{result.source}:{result.ref}"] = sent_at
+    return marks
 
 
 def inspect_file(path: Path, fallback_title: str) -> tuple[str, str, str | None]:
@@ -158,7 +181,7 @@ async def process_file_job(job_id: str) -> None:
             title=job.title,
             author=job.author,
         )
-        await job_queue.update(job_id, "sent")
+        await job_queue.set(job_id, status="sent", error=None, sent_at=utcnow())
 
     except Exception as e:
         await job_queue.update(job_id, "failed", str(e))
@@ -232,6 +255,7 @@ async def search_library(
             "query": q.strip(),
             "error": error,
             "sources": library.SOURCES,
+            "sent": await sent_marks(results),
             "appending": cursor is not None,
             "next_query": next_query,
         },
@@ -252,7 +276,9 @@ async def download_from_library(
         return HTMLResponse(f"<div class='job-card__error'>{html.escape(str(exc))}</div>")
 
     filename = f"{slugify(title)}.{book_format}"
-    job = await job_queue.add(filename, status="review", kindle_address=kindle_address)
+    job = await job_queue.add(
+        filename, status="review", kindle_address=kindle_address, source=source, ref=ref
+    )
     tmp_path = Path(tempfile.gettempdir()) / f"{job.id}_{filename}"
 
     try:
@@ -286,7 +312,9 @@ async def upload(
 
     for file in files:
         filename = file.filename or ""
-        job = await job_queue.add(filename, status="review", kindle_address=kindle_address)
+        job = await job_queue.add(
+            filename, status="review", kindle_address=kindle_address, source="upload"
+        )
 
         safe_name = Path(filename).name
         tmp_path = Path(tempfile.gettempdir()) / f"{job.id}_{safe_name}"
@@ -470,9 +498,30 @@ async def download_job_file(job_id: str):
 @app.delete("/jobs/{job_id}", response_class=HTMLResponse)
 async def delete_job(job_id: str):
     job = await job_queue.get(job_id)
-    if job:
+    if job and job.status != "sent":
         if job.tmp_path and job.status not in ACTIVE_STATUSES:
             Path(job.tmp_path).unlink(missing_ok=True)
+        await job_queue.remove(job_id)
+    return HTMLResponse("")
+
+
+@app.get("/history", response_class=HTMLResponse)
+async def history(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/history.html",
+        context={
+            "request": request,
+            "jobs": await job_queue.sent(HISTORY_LIMIT),
+            "sources": library.SOURCES,
+        },
+    )
+
+
+@app.delete("/history/{job_id}", response_class=HTMLResponse)
+async def forget_sent(job_id: str):
+    job = await job_queue.get(job_id)
+    if job and job.status == "sent":
         await job_queue.remove(job_id)
     return HTMLResponse("")
 

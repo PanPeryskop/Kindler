@@ -55,13 +55,17 @@ DEFAULT_USER_AGENT = (
 )
 
 _session: _ZSession | None = None
-_session_lock = asyncio.Lock()
+_opening: asyncio.Task[_ZSession] | None = None
 _retiring: set[asyncio.Task] = set()
 _pages: OrderedDict[str, tuple[float, list[dict[str, Any]], int]] = OrderedDict()
 logger = logging.getLogger(__name__)
 
 
 class ZLibraryBlocked(RuntimeError):
+    pass
+
+
+class ZLibraryUnreachable(RuntimeError):
     pass
 
 
@@ -77,6 +81,15 @@ def _use_tor() -> bool:
 
 def _timeout() -> int:
     return TOR_TIMEOUT if _use_tor() else ZLIBRARY_TIMEOUT
+
+
+def _session_timeout() -> int:
+    return _timeout() * 4 + CHALLENGE_TIMEOUT_SECONDS
+
+
+def _configured() -> bool:
+    has_login = bool(settings.zlib_email and settings.zlib_password)
+    return has_login or Path(settings.zlib_cookies_file).is_file()
 
 
 def _mirror() -> str:
@@ -110,9 +123,44 @@ def _load_cookies(mirror: str) -> dict[str, str]:
     }
 
 
+def _load_state(mirror: str) -> tuple[dict[str, str], str]:
+    try:
+        state = json.loads(Path(settings.zlib_state_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}, DEFAULT_USER_AGENT
+    if not isinstance(state, dict) or state.get("mirror") != mirror:
+        return {}, DEFAULT_USER_AGENT
+    cookies, user_agent = state.get("cookies"), state.get("user_agent")
+    if not isinstance(cookies, dict) or not isinstance(user_agent, str) or not user_agent:
+        return {}, DEFAULT_USER_AGENT
+    return {str(name): str(value) for name, value in cookies.items()}, user_agent
+
+
+def _save_state(mirror: str, cookies: dict[str, str], user_agent: str) -> None:
+    state = {
+        "mirror": mirror,
+        "user_agent": user_agent,
+        "cookies": {name: value for name, value in cookies.items() if name not in SESSION_COOKIES},
+    }
+    try:
+        Path(settings.zlib_state_file).write_text(json.dumps(state), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Z-Lib: could not save the browser check state: %s", exc)
+
+
 def _is_challenge(status: int, body: str) -> bool:
     head = body[:4000].lower()
     return status in CHALLENGE_STATUSES or any(marker in head for marker in CHALLENGE_MARKERS)
+
+
+def _unreachable() -> ZLibraryUnreachable:
+    if _use_tor():
+        return ZLibraryUnreachable(
+            f"Cannot reach Z-Library through Tor at {settings.zlib_tor_proxy}. Is Tor running?"
+        )
+    return ZLibraryUnreachable(
+        f"Cannot reach Z-Library at {_mirror()}. Try again, or point ZLIB_MIRROR at another mirror."
+    )
 
 
 def _blocked() -> ZLibraryBlocked:
@@ -188,11 +236,7 @@ async def _get_text(http: AsyncSession, url: str) -> tuple[int, str]:
     try:
         response = await http.get(url)
     except RequestException as exc:
-        if not _use_tor():
-            raise
-        raise RuntimeError(
-            f"Cannot reach Z-Library through Tor at {settings.zlib_tor_proxy}. Is Tor running?"
-        ) from exc
+        raise _unreachable() from exc
     return response.status_code, response.text
 
 
@@ -227,7 +271,8 @@ async def _login(http: AsyncSession, mirror: str) -> None:
 async def _open_session() -> _ZSession:
     mirror = _mirror()
     cookies = _load_cookies(mirror)
-    http = _new_http(cookies, DEFAULT_USER_AGENT)
+    cleared, user_agent = _load_state(mirror)
+    http = _new_http({**cookies, **cleared}, user_agent)
     try:
         status, body = await _get_text(http, f"{mirror}/")
         if _is_challenge(status, body):
@@ -237,6 +282,7 @@ async def _open_session() -> _ZSession:
             status, body = await _get_text(http, f"{mirror}/")
             if _is_challenge(status, body):
                 raise _blocked()
+            _save_state(mirror, solved, user_agent)
 
         if not all(http.cookies.get(name) for name in SESSION_COOKIES):
             await _login(http, mirror)
@@ -247,26 +293,54 @@ async def _open_session() -> _ZSession:
     return _ZSession(http=http, mirror=mirror)
 
 
-async def _get_session() -> _ZSession:
+async def _establish() -> _ZSession:
     global _session
-    async with _session_lock:
-        if _session is None:
-            _session = await _open_session()
+    try:
+        session = await asyncio.wait_for(_open_session(), timeout=_session_timeout())
+    except TimeoutError as exc:
+        raise ZLibraryUnreachable(
+            "Z-Library took too long to open a session. Try again in a minute."
+        ) from exc
+    _session = session
+    return session
+
+
+def _forget_opening(task: asyncio.Task[_ZSession]) -> None:
+    global _opening
+    if _opening is task:
+        _opening = None
+    if not task.cancelled():
+        task.exception()
+
+
+async def _get_session() -> _ZSession:
+    global _opening
+    if _session is not None:
         return _session
+    if _opening is None:
+        _opening = asyncio.create_task(_establish())
+        _opening.add_done_callback(_forget_opening)
+    return await asyncio.shield(_opening)
 
 
 async def _reset_session(stale: _ZSession) -> None:
     global _session
-    async with _session_lock:
-        if _session is stale:
-            _session = None
-            await stale.http.close()
+    if _session is not stale:
+        return
+    _session = None
+    await stale.http.close()
 
 
 async def _fetch(url: str) -> str:
     for attempt in range(2):
         session = await _get_session()
-        status, body = await _get_text(session.http, url)
+        try:
+            status, body = await _get_text(session.http, url)
+        except ZLibraryUnreachable:
+            await _reset_session(session)
+            if attempt:
+                raise
+            continue
         if not _is_challenge(status, body):
             return body
         await _reset_session(session)
@@ -285,9 +359,19 @@ def _retire(session: _ZSession) -> None:
     task.add_done_callback(_retiring.discard)
 
 
+async def _warm_up() -> None:
+    if not _configured():
+        return
+    try:
+        await _get_session()
+    except Exception as exc:
+        logger.warning("Z-Lib warm-up failed: %s", exc)
+
+
 async def keep_warm() -> None:
     global _session
     if not _use_tor():
+        await _warm_up()
         return
 
     while True:
@@ -297,8 +381,7 @@ async def keep_warm() -> None:
             logger.warning("Z-Lib Tor warm-up failed: %s", exc)
             delay = KEEP_WARM_RETRY_SECONDS
         else:
-            async with _session_lock:
-                old, _session = _session, session
+            old, _session = _session, session
             if old is not None:
                 _retire(old)
             delay = KEEP_WARM_SECONDS
@@ -377,7 +460,7 @@ async def _search_page(
         _pages.move_to_end(url)
         return cached[1], cached[2]
 
-    html = await asyncio.wait_for(_fetch(url), timeout=_timeout())
+    html = await _fetch(url)
     books, total = _parse_search_page(html, _mirror())
     books = [book for book in books if _matches(book, language, extension)]
     _pages[url] = (time.monotonic(), books, total)
@@ -425,15 +508,15 @@ def _parse_book_page(html: str) -> tuple[str | None, str, str, str]:
 
 
 async def resolve(ref: str, book_format: str) -> tuple[str, str, str]:
-    session = await _get_session()
-    html = await asyncio.wait_for(_fetch(f"{session.mirror}/book/{ref}"), timeout=_timeout())
+    mirror = _mirror()
+    html = await _fetch(f"{mirror}/book/{ref}")
     href, extension, title, author = _parse_book_page(html)
 
     if not href:
         raise ValueError("This book is not currently available for download.")
     if book_format.lower().lstrip(".") != extension:
         raise ValueError(f"Format '{book_format}' is not available for this book.")
-    return urljoin(f"{session.mirror}/", href), title or ref, author
+    return urljoin(f"{mirror}/", href), title or ref, author
 
 
 async def download(url: str, destination: Path, max_bytes: int) -> None:
