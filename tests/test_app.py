@@ -5,6 +5,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app, job_queue
+from tests.support import error_of, stored_file
 from tests.test_metadata import make_epub
 
 pytestmark = pytest.mark.usefixtures("clean_db")
@@ -44,12 +45,12 @@ async def test_upload_persists_job_and_temp_file(tmp_path: Path):
     assert len(jobs) == 1
     job = jobs[0]
     assert job.kindle_address == "k@kindle.com"
-    assert Path(job.tmp_path).exists()
-    Path(job.tmp_path).unlink(missing_ok=True)
+    assert stored_file(job).exists()
+    stored_file(job).unlink(missing_ok=True)
 
 
 async def test_oversized_upload_is_rejected(tmp_path: Path, monkeypatch):
-    from app.config import settings
+    from kindler.settings import settings
 
     monkeypatch.setattr(settings, "max_attachment_mb", 1)
     transport = ASGITransport(app=app)
@@ -58,7 +59,7 @@ async def test_oversized_upload_is_rejected(tmp_path: Path, monkeypatch):
 
     assert "Failed" in response.text
     jobs = await job_queue.with_status("failed")
-    assert "exceeds" in jobs[0].error
+    assert "exceeds" in error_of(jobs[0])
 
 
 async def test_filename_with_traversal_stays_in_temp_dir(tmp_path: Path):
@@ -67,14 +68,14 @@ async def test_filename_with_traversal_stays_in_temp_dir(tmp_path: Path):
         await post_upload(client, "../../evil.epub", epub_bytes(tmp_path))
 
     job = (await job_queue.with_status("review"))[0]
-    stored = Path(job.tmp_path)
+    stored = stored_file(job)
     assert stored.name.endswith("evil.epub")
     assert ".." not in str(stored)
     stored.unlink(missing_ok=True)
 
 
 async def test_search_endpoint_renders_results(monkeypatch):
-    from app.services import library
+    from kindler import library
 
     async def fake_search(query, language="", source="", book_format="", cursor=None):
         result = library.SearchResult(
@@ -100,7 +101,7 @@ async def test_search_endpoint_renders_results(monkeypatch):
 
 
 async def test_search_endpoint_passes_language_and_rejects_bogus_codes(monkeypatch):
-    from app.services import library
+    from kindler import library
 
     seen: list[str] = []
 
@@ -118,7 +119,7 @@ async def test_search_endpoint_passes_language_and_rejects_bogus_codes(monkeypat
 
 
 async def test_search_endpoint_passes_source_and_rejects_bogus_ones(monkeypatch):
-    from app.services import library
+    from kindler import library
 
     seen: list[str] = []
 
@@ -136,7 +137,7 @@ async def test_search_endpoint_passes_source_and_rejects_bogus_ones(monkeypatch)
 
 
 async def test_index_renders_a_switch_option_per_source():
-    from app.services import library
+    from kindler import library
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -147,7 +148,7 @@ async def test_index_renders_a_switch_option_per_source():
 
 
 async def test_search_endpoint_reports_empty_query(monkeypatch):
-    from app.services import library
+    from kindler import library
 
     async def fake_search(query, language="", source="", book_format="", cursor=None):
         return library.SearchPage([])
@@ -161,7 +162,7 @@ async def test_search_endpoint_reports_empty_query(monkeypatch):
 
 
 async def test_library_download_creates_review_job(tmp_path: Path, monkeypatch):
-    from app.services import library
+    from kindler import library
 
     payload = epub_bytes(tmp_path)
 
@@ -195,12 +196,12 @@ async def test_library_download_creates_review_job(tmp_path: Path, monkeypatch):
     assert job.filename == "quo-vadis.epub"
     assert job.title == "Zebrane Opowiadania"
     assert (job.source, job.ref) == ("wolnelektury", "quo-vadis")
-    assert Path(job.tmp_path).exists()
-    Path(job.tmp_path).unlink(missing_ok=True)
+    assert stored_file(job).exists()
+    stored_file(job).unlink(missing_ok=True)
 
 
 async def test_download_of_format_without_metadata_uses_catalogue_title(monkeypatch):
-    from app.services import library
+    from kindler import library
 
     async def fake_resolve(source, ref, book_format):
         return (
@@ -231,7 +232,7 @@ async def test_download_of_format_without_metadata_uses_catalogue_title(monkeypa
     assert job.title == "Quo vadis"
     assert job.author == "Henryk Sienkiewicz"
     assert job.id not in job.title
-    Path(job.tmp_path).unlink(missing_ok=True)
+    stored_file(job).unlink(missing_ok=True)
 
 
 async def test_uploaded_file_title_excludes_job_id_prefix(tmp_path: Path):
@@ -246,11 +247,11 @@ async def test_uploaded_file_title_excludes_job_id_prefix(tmp_path: Path):
     job = (await job_queue.with_status("review"))[0]
     assert job.title == "moja ksiazka"
     assert job.id not in job.title
-    Path(job.tmp_path).unlink(missing_ok=True)
+    stored_file(job).unlink(missing_ok=True)
 
 
 async def test_library_download_surfaces_blocked_host(monkeypatch):
-    from app.services import library
+    from kindler import library
 
     async def fake_resolve(source, ref, book_format):
         return "http://127.0.0.1/secret", "Sneaky", "Nobody"
@@ -285,7 +286,7 @@ async def test_job_status_endpoint_returns_card(tmp_path: Path):
     assert response.status_code == 200
     assert job.id in response.text
     assert "Job not found" in missing.text
-    Path(job.tmp_path).unlink(missing_ok=True)
+    stored_file(job).unlink(missing_ok=True)
 
 
 async def make_review_job(tmp_path: Path, status: str = "review") -> tuple[str, Path]:
@@ -425,14 +426,14 @@ async def test_convert_replaces_the_file_with_an_epub(tmp_path: Path, monkeypatc
         download = await client.get(f"/jobs/{job_id}/file")
 
     assert "Converting" in response.text
-    job = await job_queue.get(job_id)
+    job = await job_queue.require(job_id)
     assert job.status == "review"
     assert job.filename == "book.epub"
     assert (job.title, job.author) == ("Drakula", "B. Stoker")
     assert not stored.exists()
-    assert Path(job.tmp_path).name == f"{job_id}_book.epub"
+    assert stored_file(job).name == f"{job_id}_book.epub"
     assert "book.epub" in download.headers["content-disposition"]
-    Path(job.tmp_path).unlink(missing_ok=True)
+    stored_file(job).unlink(missing_ok=True)
 
 
 async def test_failed_conversion_keeps_the_original(tmp_path: Path, monkeypatch):
@@ -444,7 +445,7 @@ async def test_failed_conversion_keeps_the_original(tmp_path: Path, monkeypatch)
         await client.post(f"/jobs/{job_id}/convert")
         card = await client.get(f"/jobs/{job_id}")
 
-    job = await job_queue.get(job_id)
+    job = await job_queue.require(job_id)
     assert job.status == "review"
     assert job.filename == "book.pdf"
     assert stored.exists()
@@ -460,14 +461,14 @@ async def test_convert_is_refused_outside_review(tmp_path: Path, monkeypatch):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         await client.post(f"/jobs/{job_id}/convert")
 
-    job = await job_queue.get(job_id)
+    job = await job_queue.require(job_id)
     assert job.status == "sending"
     assert job.filename == "book.pdf"
     assert stored.exists()
 
 
 async def test_search_endpoint_passes_format_and_offers_more(monkeypatch):
-    from app.services import library
+    from kindler import library
 
     seen = []
 
@@ -497,7 +498,7 @@ async def test_search_endpoint_passes_format_and_offers_more(monkeypatch):
 
 
 async def test_appended_page_without_results_is_silent(monkeypatch):
-    from app.services import library
+    from kindler import library
 
     async def fake_search(query, language="", source="", book_format="", cursor=None):
         return library.SearchPage([])
@@ -512,7 +513,7 @@ async def test_appended_page_without_results_is_silent(monkeypatch):
 
 
 async def test_lookup_fills_the_review_card(tmp_path: Path, monkeypatch):
-    from app.services.lookup import BookInfo
+    from kindler.lookup import BookInfo
 
     seen = []
 
@@ -533,7 +534,7 @@ async def test_lookup_fills_the_review_card(tmp_path: Path, monkeypatch):
     assert 'value="Dracula"' in response.text
     assert 'value="Bram Stoker"' in response.text
     assert "data:image/jpeg;base64,AAAA" in response.text
-    assert (await job_queue.get(job_id)).cover == "data:image/jpeg;base64,AAAA"
+    assert (await job_queue.require(job_id)).cover == "data:image/jpeg;base64,AAAA"
 
 
 async def test_lookup_without_match_keeps_typed_values(tmp_path: Path, monkeypatch):
@@ -578,7 +579,7 @@ async def test_convert_passes_the_preset_options(tmp_path: Path, monkeypatch):
             ["--enable-heuristics", "--smarten-punctuation", "--unwrap-factor", "0.45"],
         )
     ]
-    Path((await job_queue.get(job_id)).tmp_path).unlink(missing_ok=True)
+    stored_file(await job_queue.require(job_id)).unlink(missing_ok=True)
 
 
 async def test_unknown_or_unfit_preset_is_refused(tmp_path: Path, monkeypatch):
@@ -592,7 +593,7 @@ async def test_unknown_or_unfit_preset_is_refused(tmp_path: Path, monkeypatch):
         await client.post(f"/jobs/{epub_id}/convert", data={"preset": "rm -rf"})
 
     assert calls == []
-    assert (await job_queue.get(epub_id)).status == "review"
+    assert (await job_queue.require(epub_id)).status == "review"
 
 
 async def test_epub_can_be_cleaned_up_in_place(tmp_path: Path, monkeypatch):
@@ -603,10 +604,10 @@ async def test_epub_can_be_cleaned_up_in_place(tmp_path: Path, monkeypatch):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         await client.post(f"/jobs/{job_id}/convert", data={"preset": "cleanup"})
 
-    job = await job_queue.get(job_id)
+    job = await job_queue.require(job_id)
     assert job.status == "review"
     assert job.filename == "book.epub"
-    assert Path(job.tmp_path) == stored
+    assert stored_file(job) == stored
     assert stored.exists()
 
 
@@ -624,7 +625,8 @@ async def test_uploaded_cover_replaces_the_card_cover(tmp_path: Path):
             data={"title": "Drakula", "author": "Stoker"},
         )
 
-    job = await job_queue.get(job_id)
+    job = await job_queue.require(job_id)
+    assert job.cover is not None
     assert job.cover.startswith("data:image/png;base64,")
     assert (job.title, job.author) == ("Drakula", "Stoker")
     assert job.cover in response.text
@@ -645,13 +647,13 @@ async def test_cover_upload_rejects_non_images_and_large_files(tmp_path: Path, m
 
     assert "JPEG, PNG or GIF" in html_response.text
     assert "smaller than" in big_response.text
-    assert (await job_queue.get(job_id)).cover is None
+    assert (await job_queue.require(job_id)).cover is None
 
 
 async def card_version(job_id: str) -> str:
     from app.main import job_card_context
 
-    return job_card_context(await job_queue.get(job_id))["version"]
+    return job_card_context(await job_queue.require(job_id))["version"]
 
 
 async def test_polling_skips_the_swap_while_the_card_is_unchanged(tmp_path: Path):
@@ -697,7 +699,7 @@ async def test_index_busts_the_stylesheet_cache():
 
 
 def catalogue_result(source: str, ref: str, title: str, formats: dict[str, str]):
-    from app.services import library
+    from kindler import library
 
     return library.SearchResult(
         source=source, ref=ref, title=title, author="A", cover_url=None, formats=formats
@@ -705,7 +707,7 @@ def catalogue_result(source: str, ref: str, title: str, formats: dict[str, str])
 
 
 async def search_with(monkeypatch, results):
-    from app.services import library
+    from kindler import library
 
     async def fake_search(query, language="", source="", book_format="", cursor=None):
         return library.SearchPage(results)
@@ -766,7 +768,7 @@ async def test_finished_job_records_when_it_was_sent(tmp_path: Path, monkeypatch
 
     await main.process_file_job(job_id)
 
-    job = await job_queue.get(job_id)
+    job = await job_queue.require(job_id)
     assert job.status == "sent"
     assert job.sent_at is not None
 
@@ -821,7 +823,7 @@ async def test_index_offers_batch_actions_and_history():
 
 
 async def test_index_takes_the_default_kindle_address_from_settings():
-    from app.preferences import save_preferences
+    from kindler.preferences import save_preferences
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -840,7 +842,7 @@ async def post_settings(**data):
 
 
 async def test_saving_settings_updates_the_page(monkeypatch):
-    from app.preferences import preferences
+    from kindler.preferences import preferences
 
     response = await post_settings(kindle_address=" me_1@kindle.com ")
 
@@ -852,7 +854,7 @@ async def test_saving_settings_updates_the_page(monkeypatch):
 
 
 async def test_invalid_settings_are_reported_and_not_saved():
-    from app.preferences import preferences
+    from kindler.preferences import preferences
 
     response = await post_settings(kindle_address="not-an-address", show_sender_notice="true")
 
@@ -863,7 +865,7 @@ async def test_invalid_settings_are_reported_and_not_saved():
 
 
 async def test_dismissed_notice_stays_hidden():
-    from app.preferences import preferences
+    from kindler.preferences import preferences
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -879,7 +881,7 @@ async def test_dismissed_notice_stays_hidden():
 
 
 async def test_settings_form_never_reveals_the_environment_account(monkeypatch):
-    from app.config import settings
+    from kindler.settings import settings
 
     monkeypatch.setattr(settings, "zlib_email", "owner@example.com")
     transport = ASGITransport(app=app)
@@ -892,7 +894,7 @@ async def test_settings_form_never_reveals_the_environment_account(monkeypatch):
 
 @pytest.fixture
 def zlib_restarts(monkeypatch):
-    from app.services import z_lib
+    from kindler import z_lib
 
     calls = []
 
@@ -917,8 +919,8 @@ async def add_account(email: str, password: str):
 
 
 async def test_first_account_becomes_active(zlib_restarts):
-    from app.accounts import list_accounts
-    from app.preferences import preferences
+    from kindler.accounts import list_accounts
+    from kindler.preferences import preferences
 
     response = await add_account("one@example.com", "pass-1")
 
@@ -930,7 +932,7 @@ async def test_first_account_becomes_active(zlib_restarts):
 
 
 async def test_more_accounts_keep_the_active_one_until_switched(zlib_restarts):
-    from app.preferences import preferences
+    from kindler.preferences import preferences
 
     await add_account("one@example.com", "pass-1")
     response = await add_account("two@example.com", "pass-1")
@@ -942,7 +944,7 @@ async def test_more_accounts_keep_the_active_one_until_switched(zlib_restarts):
 
 
 async def test_switching_accounts_restarts_the_session(zlib_restarts):
-    from app.preferences import preferences
+    from kindler.preferences import preferences
 
     await add_account("one@example.com", "pass-1")
     await add_account("two@example.com", "pass-1")
@@ -960,8 +962,8 @@ async def test_switching_accounts_restarts_the_session(zlib_restarts):
 
 
 async def test_removing_the_active_account_falls_back_to_the_next(zlib_restarts):
-    from app.accounts import list_accounts
-    from app.preferences import preferences
+    from kindler.accounts import list_accounts
+    from kindler.preferences import preferences
 
     await add_account("one@example.com", "pass-1")
     await add_account("two@example.com", "pass-1")
@@ -978,19 +980,21 @@ async def test_removing_the_active_account_falls_back_to_the_next(zlib_restarts)
 
 
 async def test_readding_an_account_updates_its_password(zlib_restarts):
-    from app.accounts import get_account
+    from kindler.accounts import get_account
 
     await add_account("one@example.com", "old")
     zlib_restarts.clear()
 
     await add_account(" one@example.com ", "new")
 
-    assert (await get_account("one@example.com")).password == "new"
+    account = await get_account("one@example.com")
+    assert account is not None
+    assert account.password == "new"
     assert zlib_restarts == ["reset", "warm_up"]
 
 
 async def test_invalid_accounts_are_refused(zlib_restarts):
-    from app.accounts import list_accounts
+    from kindler.accounts import list_accounts
 
     bad_email = await add_account("not-an-address", "pass-1")
     no_password = await add_account("one@example.com", "")

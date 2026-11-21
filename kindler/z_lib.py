@@ -6,6 +6,7 @@ import logging
 import re
 import time
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from http.cookiejar import LoadError, MozillaCookieJar
 from pathlib import Path
@@ -16,8 +17,8 @@ from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.exceptions import RequestException
 
-from app.accounts import active_account
-from app.config import settings
+from kindler.accounts import active_account
+from kindler.settings import settings
 
 ZLIB_TOR_DOMAIN = "http://bookszlibb74ugqojhzhg2a63w5i2atv5bqarulgczawnbmsb6s6qead.onion"
 ZLIB_LANGUAGES = {
@@ -54,6 +55,8 @@ DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
 )
+
+ChallengeSolver = Callable[[str], Awaitable[tuple[dict[str, str], str]]]
 
 _session: _ZSession | None = None
 _opening: asyncio.Task[_ZSession] | None = None
@@ -224,9 +227,21 @@ def _solve_challenge_sync(mirror: str) -> tuple[dict[str, str], str]:
     raise _blocked()
 
 
-async def _solve_challenge(mirror: str) -> tuple[dict[str, str], str]:
+async def solve_in_chromium(mirror: str) -> tuple[dict[str, str], str]:
     logger.info("Z-Lib: solving the browser check in headless Chromium")
     return await asyncio.to_thread(_solve_challenge_sync, mirror)
+
+
+_challenge_solver: ChallengeSolver = solve_in_chromium
+
+
+def use_challenge_solver(solver: ChallengeSolver) -> None:
+    global _challenge_solver
+    _challenge_solver = solver
+
+
+def is_challenge_page(body: str) -> bool:
+    return _is_challenge(200, body)
 
 
 def _new_http(cookies: dict[str, str], user_agent: str) -> AsyncSession:
@@ -285,7 +300,7 @@ async def _open_session() -> _ZSession:
         status, body = await _get_text(http, f"{mirror}/")
         if _is_challenge(status, body):
             await http.close()
-            solved, user_agent = await _solve_challenge(mirror)
+            solved, user_agent = await _challenge_solver(mirror)
             http = _new_http({**cookies, **solved}, user_agent)
             status, body = await _get_text(http, f"{mirror}/")
             if _is_challenge(status, body):

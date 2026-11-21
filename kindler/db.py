@@ -1,11 +1,12 @@
 from datetime import UTC, datetime
 
+from pydantic import NaiveDatetime
 from sqlalchemy import Connection, inspect
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlmodel import Field, SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.config import settings
+from kindler.settings import settings
 
 
 def utcnow() -> datetime:
@@ -24,8 +25,8 @@ class Job(SQLModel, table=True):
     cover: str | None = None
     source: str | None = None
     ref: str | None = None
-    created_at: datetime = Field(default_factory=utcnow)
-    sent_at: datetime | None = None
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    sent_at: NaiveDatetime | None = None
 
 
 class Preference(SQLModel, table=True):
@@ -36,11 +37,35 @@ class Preference(SQLModel, table=True):
 class ZLibAccount(SQLModel, table=True):
     email: str = Field(primary_key=True)
     password: str
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
 
 
-engine = create_async_engine(f"sqlite+aiosqlite:///{settings.db_path}")
-session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+class Database:
+    def __init__(self) -> None:
+        self._connection: tuple[AsyncEngine, async_sessionmaker[AsyncSession]] | None = None
+
+    def _open(self) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
+        if self._connection is None:
+            engine = create_async_engine(f"sqlite+aiosqlite:///{settings.db_path}")
+            sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+            self._connection = engine, sessions
+        return self._connection
+
+    @property
+    def engine(self) -> AsyncEngine:
+        return self._open()[0]
+
+    def session(self) -> AsyncSession:
+        return self._open()[1]()
+
+    async def close(self) -> None:
+        if self._connection is not None:
+            await self._connection[0].dispose()
+        self._connection = None
+
+
+database = Database()
+session_factory = database.session
 
 
 def add_missing_columns(connection: Connection) -> None:
@@ -57,6 +82,6 @@ def add_missing_columns(connection: Connection) -> None:
 
 
 async def init_db() -> None:
-    async with engine.begin() as connection:
+    async with database.engine.begin() as connection:
         await connection.run_sync(SQLModel.metadata.create_all)
         await connection.run_sync(add_missing_columns)

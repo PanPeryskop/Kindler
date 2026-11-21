@@ -3,7 +3,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.services import library
+from kindler import library
 
 GUTENDEX_PAYLOAD = {
     "results": [
@@ -291,7 +291,7 @@ async def test_non_book_formats_are_dropped(monkeypatch):
     dracula = next(r for r in results if r.title == "Dracula")
 
     assert set(dracula.formats) == {"epub", "mobi"}
-    assert dracula.cover_url.endswith(".jpg")
+    assert (dracula.cover_url or "").endswith(".jpg")
 
 
 async def test_relative_cover_paths_become_absolute(monkeypatch):

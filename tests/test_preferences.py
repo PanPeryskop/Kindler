@@ -1,7 +1,7 @@
 import pytest
 
-from app.db import Preference, session_factory
-from app.preferences import load_preferences, preferences, save_preferences
+from kindler.db import Preference, session_factory
+from kindler.preferences import load_preferences, preferences, save_preferences
 
 pytestmark = pytest.mark.usefixtures("clean_db")
 

@@ -7,7 +7,7 @@ import re
 import shutil
 import tempfile
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -15,20 +15,19 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from slugify import slugify
 
-from app.accounts import activate, get_account, list_accounts, remove_account, save_account
 from app.config import settings
-from app.db import Job, init_db, utcnow
-from app.preferences import load_preferences, preferences, save_preferences
-from app.queue import ACTIVE_STATUSES, JobQueue
-from app.services import library, z_lib
 from app.services.convert import CalibreConverter, options_for, presets_for
-from app.services.covers import data_uri, extract_cover, image_media_type
-from app.services.detect import FileTypeDetector
-from app.services.lookup import lookup, merge
-from app.services.metadata import apply_cover, apply_metadata, probe_metadata
-from app.services.sender import send_to_kindle
+from kindler import library, z_lib
+from kindler.accounts import activate, get_account, list_accounts, remove_account, save_account
+from kindler.covers import data_uri, image_media_type
+from kindler.db import Job, init_db, utcnow
+from kindler.detect import FileTypeDetector
+from kindler.lookup import lookup, merge
+from kindler.preferences import load_preferences, preferences, save_preferences
+from kindler.queue import ACTIVE_STATUSES, JobQueue
+from kindler.sender import send_to_kindle
+from kindler.workflow import fetch_from_library, inspect_file, sent_marks, stamp_metadata
 
 REVIEW_TTL = timedelta(hours=6)
 NATIVE_TYPES = ("epub", "pdf")
@@ -118,36 +117,6 @@ def render_job_card(request: Request, job: Job) -> str:
     return render_card(request, job_card_context(job))
 
 
-def title_key(title: str | None) -> str:
-    return " ".join((title or "").casefold().split())
-
-
-async def sent_marks(results: list[library.SearchResult]) -> dict[str, datetime]:
-    if not results:
-        return {}
-    by_ref: dict[tuple[str | None, str | None], datetime] = {}
-    by_title: dict[str, datetime] = {}
-    for job in await job_queue.sent():
-        sent_at = job.sent_at or job.created_at
-        if job.ref:
-            by_ref.setdefault((job.source, job.ref), sent_at)
-        if job.title:
-            by_title.setdefault(title_key(job.title), sent_at)
-
-    marks = {}
-    for result in results:
-        sent_at = by_ref.get((result.source, result.ref)) or by_title.get(title_key(result.title))
-        if sent_at:
-            marks[f"{result.source}:{result.ref}"] = sent_at
-    return marks
-
-
-def inspect_file(path: Path, fallback_title: str) -> tuple[str, str, str | None]:
-    file_type, _ = FileTypeDetector.detect_file_type(path)
-    title, author = probe_metadata(path, file_type, fallback_title=fallback_title)
-    return title, author, extract_cover(path, file_type)
-
-
 async def process_file_job(job_id: str) -> None:
     job = await job_queue.get(job_id)
     if not job or not job.tmp_path:
@@ -173,10 +142,7 @@ async def process_file_job(job_id: str) -> None:
                 return
             outgoing, outgoing_type = converted_path, "epub"
 
-        await asyncio.to_thread(
-            apply_metadata, outgoing, outgoing_type, job.title or "", job.author or ""
-        )
-        await asyncio.to_thread(apply_cover, outgoing, outgoing_type, job.cover)
+        await stamp_metadata(outgoing, outgoing_type, job)
 
         await job_queue.update(job_id, "sending")
         await send_to_kindle(
@@ -374,7 +340,7 @@ async def search_library(
             "query": q.strip(),
             "error": error,
             "sources": library.SOURCES,
-            "sent": await sent_marks(results),
+            "sent": await sent_marks(job_queue, results),
             "appending": cursor is not None,
             "next_query": next_query,
         },
@@ -390,35 +356,12 @@ async def download_from_library(
     kindle_address: str = Form(...),
 ):
     try:
-        url, title, catalogue_author = await library.resolve(source, ref, book_format)
+        job = await fetch_from_library(
+            job_queue, Path(tempfile.gettempdir()), source, ref, book_format, kindle_address
+        )
     except Exception as exc:
         return HTMLResponse(f"<div class='job-card__error'>{html.escape(str(exc))}</div>")
-
-    filename = f"{slugify(title)}.{book_format}"
-    job = await job_queue.add(
-        filename, status="review", kindle_address=kindle_address, source=source, ref=ref
-    )
-    tmp_path = Path(tempfile.gettempdir()) / f"{job.id}_{filename}"
-
-    try:
-        if source == "zlib":
-            await library.download_zlib(url, tmp_path)
-        else:
-            await library.download(url, tmp_path)
-    except Exception as exc:
-        tmp_path.unlink(missing_ok=True)
-        await job_queue.update(job.id, "failed", str(exc))
-        return render_job_card(request, await job_queue.get(job.id))
-
-    probed_title, author, cover = await asyncio.to_thread(inspect_file, tmp_path, title)
-    await job_queue.set(
-        job.id,
-        tmp_path=str(tmp_path),
-        title=probed_title,
-        author=author or catalogue_author,
-        cover=cover,
-    )
-    return render_job_card(request, await job_queue.get(job.id))
+    return render_job_card(request, job)
 
 
 @app.post("/upload", response_class=HTMLResponse)
@@ -461,7 +404,7 @@ async def upload(
                 job.id, tmp_path=str(tmp_path), title=title, author=author, cover=cover
             )
 
-        html_parts.append(render_job_card(request, await job_queue.get(job.id)))
+        html_parts.append(render_job_card(request, await job_queue.require(job.id)))
 
     return HTMLResponse("".join(html_parts))
 
@@ -480,7 +423,7 @@ async def send_job(
 
     await job_queue.set(job_id, title=title, author=author, status="pending")
     background_tasks.add_task(process_file_job, job_id)
-    return render_job_card(request, await job_queue.get(job_id))
+    return render_job_card(request, await job_queue.require(job_id))
 
 
 async def convert_job(job_id: str, preset: str = "standard") -> None:
@@ -534,7 +477,7 @@ async def convert_job_file(
 
     await job_queue.set(job_id, title=title, author=author, status="converting", error=None)
     background_tasks.add_task(convert_job, job_id, preset)
-    return render_job_card(request, await job_queue.get(job_id))
+    return render_job_card(request, await job_queue.require(job_id))
 
 
 @app.post("/jobs/{job_id}/cover", response_class=HTMLResponse)
@@ -553,18 +496,15 @@ async def upload_job_cover(
 
     data = await cover.read(MAX_COVER_BYTES + 1)
     media_type = image_media_type(data)
+    fields: dict[str, str | None] = {"title": title, "author": author}
     if len(data) > MAX_COVER_BYTES:
-        error = f"The cover must be smaller than {MAX_COVER_BYTES // 1_048_576} MB."
+        fields["error"] = f"The cover must be smaller than {MAX_COVER_BYTES // 1_048_576} MB."
     elif media_type is None:
-        error = "The cover must be a JPEG, PNG or GIF image."
+        fields["error"] = "The cover must be a JPEG, PNG or GIF image."
     else:
-        error = None
-
-    fields = {"title": title, "author": author, "error": error}
-    if error is None:
-        fields["cover"] = data_uri(data, media_type)
+        fields.update(error=None, cover=data_uri(data, media_type))
     await job_queue.set(job_id, **fields)
-    return render_job_card(request, await job_queue.get(job_id))
+    return render_job_card(request, await job_queue.require(job_id))
 
 
 @app.post("/jobs/{job_id}/lookup", response_class=HTMLResponse)
@@ -603,7 +543,7 @@ async def lookup_job_metadata(
             cover=found.cover or job.cover,
             error=None,
         )
-    return render_job_card(request, await job_queue.get(job_id))
+    return render_job_card(request, await job_queue.require(job_id))
 
 
 @app.get("/jobs/{job_id}/file")

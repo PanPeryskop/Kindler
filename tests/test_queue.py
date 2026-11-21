@@ -4,9 +4,10 @@ from pathlib import Path
 import pytest
 from sqlalchemy import inspect
 
-from app.db import engine, init_db, utcnow
 from app.main import discard_abandoned_uploads, fail_interrupted_jobs
-from app.queue import JobQueue
+from kindler.db import database, init_db, utcnow
+from kindler.queue import JobQueue
+from tests.support import error_of
 
 pytestmark = pytest.mark.usefixtures("clean_db")
 
@@ -16,7 +17,7 @@ queue = JobQueue()
 async def test_job_survives_and_round_trips():
     job = await queue.add("book.epub", status="review", kindle_address="k@kindle.com")
 
-    stored = await queue.get(job.id)
+    stored = await queue.require(job.id)
     assert stored.filename == "book.epub"
     assert stored.status == "review"
     assert stored.kindle_address == "k@kindle.com"
@@ -27,7 +28,7 @@ async def test_set_updates_fields():
 
     await queue.set(job.id, title="T", author="A", status="pending")
 
-    stored = await queue.get(job.id)
+    stored = await queue.require(job.id)
     assert (stored.title, stored.author, stored.status) == ("T", "A", "pending")
 
 
@@ -36,7 +37,7 @@ async def test_update_records_error():
 
     await queue.update(job.id, "failed", "boom")
 
-    stored = await queue.get(job.id)
+    stored = await queue.require(job.id)
     assert stored.status == "failed"
     assert stored.error == "boom"
 
@@ -65,9 +66,9 @@ async def test_abandoned_upload_is_expired_and_file_removed(tmp_path: Path):
     await discard_abandoned_uploads()
 
     assert not leftover.exists()
-    stored = await queue.get(job.id)
+    stored = await queue.require(job.id)
     assert stored.status == "failed"
-    assert "Expired" in stored.error
+    assert "Expired" in error_of(stored)
 
 
 async def test_fresh_review_is_left_alone(tmp_path: Path):
@@ -78,7 +79,7 @@ async def test_fresh_review_is_left_alone(tmp_path: Path):
     await discard_abandoned_uploads()
 
     assert keep.exists()
-    assert (await queue.get(job.id)).status == "review"
+    assert (await queue.require(job.id)).status == "review"
 
 
 async def test_interrupted_jobs_are_failed_on_restart(tmp_path: Path):
@@ -90,12 +91,12 @@ async def test_interrupted_jobs_are_failed_on_restart(tmp_path: Path):
     await fail_interrupted_jobs()
 
     assert not leftover.exists()
-    assert (await queue.get(active.id)).status == "failed"
-    assert (await queue.get(done.id)).status == "sent"
+    assert (await queue.require(active.id)).status == "failed"
+    assert (await queue.require(done.id)).status == "sent"
 
 
 async def test_init_db_adds_columns_missing_from_an_older_database():
-    async with engine.begin() as connection:
+    async with database.engine.begin() as connection:
         await connection.exec_driver_sql("DROP TABLE job")
         await connection.exec_driver_sql(
             "CREATE TABLE job (id VARCHAR PRIMARY KEY, filename VARCHAR NOT NULL, "
@@ -104,13 +105,13 @@ async def test_init_db_adds_columns_missing_from_an_older_database():
 
     await init_db()
 
-    async with engine.connect() as connection:
+    async with database.engine.connect() as connection:
         columns = await connection.run_sync(
             lambda sync: {column["name"] for column in inspect(sync).get_columns("job")}
         )
     assert {"source", "ref", "sent_at", "title", "cover"} <= columns
     job = await queue.add("book.epub", source="zlib", ref="abc")
-    assert (await queue.get(job.id)).ref == "abc"
+    assert (await queue.require(job.id)).ref == "abc"
 
 
 async def test_sent_lists_only_sent_jobs_newest_first():

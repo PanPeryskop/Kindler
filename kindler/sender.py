@@ -6,8 +6,8 @@ from pathlib import Path
 import aiosmtplib
 from slugify import slugify
 
-from app.config import settings
-from app.services.metadata import extract_epub_metadata
+from kindler.metadata import extract_epub_metadata
+from kindler.settings import settings
 
 
 async def send_to_kindle(

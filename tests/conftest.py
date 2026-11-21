@@ -9,12 +9,13 @@ os.environ.setdefault("TEST_EMAIL", "test@example.com")
 
 TEST_DB = Path(tempfile.gettempdir()) / "kindler_test.db"
 TEST_DB.unlink(missing_ok=True)
-os.environ.setdefault("DB_PATH", str(TEST_DB))
+os.environ["DB_PATH"] = str(TEST_DB)
 
 import pytest  # noqa: E402
 
-from app.db import SQLModel, engine  # noqa: E402
-from app.preferences import Preferences, preferences  # noqa: E402
+from app.config import settings  # noqa: E402
+from kindler.db import SQLModel, database  # noqa: E402
+from kindler.preferences import Preferences, preferences  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -25,7 +26,9 @@ def default_preferences(monkeypatch):
 
 @pytest.fixture
 async def clean_db():
-    async with engine.begin() as connection:
+    assert Path(settings.db_path) == TEST_DB, f"Refusing to wipe {settings.db_path}"
+    assert Path(database.engine.url.database or "") == TEST_DB
+    async with database.engine.begin() as connection:
         await connection.run_sync(SQLModel.metadata.drop_all)
         await connection.run_sync(SQLModel.metadata.create_all)
     yield

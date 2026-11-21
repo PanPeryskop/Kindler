@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 import httpx
 from slugify import slugify
 
-from app.services.covers import data_uri
+from kindler.covers import data_uri
 
 OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json"
 OPEN_LIBRARY_COVER_URL = "https://covers.openlibrary.org/b/id/{id}-L.jpg?default=false"

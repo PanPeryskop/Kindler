@@ -1,0 +1,58 @@
+[project]
+name = "kindler-portable"
+version = "0.1.0"
+description = "Find books and send them to your Kindle"
+requires-python = ">=3.12"
+dependencies = [
+    "flet==1.1.2",
+    "flet-webview==1.1.2",
+    "aiosmtplib",
+    "aiosqlite",
+    "beautifulsoup4",
+    "curl-cffi",
+    "ebooklib",
+    "greenlet",
+    "httpx",
+    "lxml",
+    "puremagic",
+    "pypdf",
+    "python-slugify",
+    "sqlmodel",
+]
+
+[dependency-groups]
+dev = [
+    "flet[all]==1.1.2",
+    "playwright",
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[tool.uv]
+package = false
+
+[tool.flet]
+org = "dev.kindler"
+product = "Kindler"
+company = "Kindler"
+copyright = "Copyright (C) 2026"
+
+[tool.flet.app]
+path = "src"
+
+[tool.flet.android]
+extract_packages = ["curl_cffi", "puremagic", "text_unidecode"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["..", "src", "."]
+testpaths = ["portable_tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["src/kindler"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["kindler", "portable"]

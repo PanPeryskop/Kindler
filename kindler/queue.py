@@ -1,9 +1,9 @@
 import uuid
 from datetime import timedelta
 
-from sqlmodel import func, select
+from sqlmodel import col, func, select
 
-from app.db import Job, session_factory, utcnow
+from kindler.db import Job, session_factory, utcnow
 
 ACTIVE_STATUSES = ("pending", "processing", "converting", "sending")
 
@@ -19,6 +19,12 @@ class JobQueue:
     async def get(self, job_id: str) -> Job | None:
         async with session_factory() as session:
             return await session.get(Job, job_id)
+
+    async def require(self, job_id: str) -> Job:
+        job = await self.get(job_id)
+        if job is None:
+            raise LookupError(f"Job {job_id} no longer exists.")
+        return job
 
     async def set(self, job_id: str, **fields) -> None:
         async with session_factory() as session:
@@ -43,7 +49,13 @@ class JobQueue:
 
     async def with_status(self, *statuses: str) -> list[Job]:
         async with session_factory() as session:
-            result = await session.exec(select(Job).where(Job.status.in_(statuses)))
+            result = await session.exec(select(Job).where(col(Job.status).in_(statuses)))
+            return list(result)
+
+    async def unsent(self) -> list[Job]:
+        query = select(Job).where(Job.status != "sent").order_by(col(Job.created_at).desc())
+        async with session_factory() as session:
+            result = await session.exec(query)
             return list(result)
 
     async def sent(self, limit: int | None = None) -> list[Job]:

@@ -7,8 +7,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from app.config import settings
-from app.services import z_lib
+from kindler import z_lib
+from kindler.settings import settings
 
 GUTENDEX_URL = "https://gutendex.com/books"
 WOLNELEKTURY_CATALOG_URL = "https://wolnelektury.pl/api/books/"
@@ -371,7 +371,10 @@ async def download(url: str, destination: Path, max_bytes: int | None = None) ->
         for _ in range(MAX_REDIRECTS):
             async with client.stream("GET", url) as response:
                 if response.is_redirect:
-                    url = str(response.next_request.url)
+                    target = response.next_request
+                    if target is None:
+                        raise ValueError("Download failed: the source redirected nowhere.")
+                    url = str(target.url)
                     if not host_allowed(url):
                         raise ValueError("Download blocked: redirect leaves the allowlist.")
                     continue

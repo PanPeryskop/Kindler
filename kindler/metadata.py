@@ -5,11 +5,11 @@ import mimetypes
 from pathlib import Path
 
 import ebooklib
-import fitz
 from ebooklib import epub
+from pypdf import PdfReader, PdfWriter
 from slugify import slugify
 
-from app.services.covers import epub_cover
+from kindler.covers import epub_cover
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,10 @@ def extract_epub_metadata(epub_path: Path) -> tuple[str, str, str]:
         return fallback_name, epub_path.stem, "Unknown Author"
 
 
+def _text(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
 def read_raw_metadata(path: Path, file_type: str) -> tuple[str, str]:
     try:
         if file_type == "epub":
@@ -43,10 +47,10 @@ def read_raw_metadata(path: Path, file_type: str) -> tuple[str, str]:
             authors = book.get_metadata("DC", "creator")
             return (titles[0][0] if titles else ""), (authors[0][0] if authors else "")
         if file_type == "pdf":
-            doc = fitz.open(str(path))
-            info = doc.metadata or {}
-            doc.close()
-            return (info.get("title") or ""), (info.get("author") or "")
+            info = PdfReader(path).metadata
+            if info is None:
+                return "", ""
+            return _text(info.title), _text(info.author)
     except Exception:
         logger.warning("Could not read metadata from %s", path.name, exc_info=True)
     return "", ""
@@ -70,15 +74,20 @@ def _write_epub_metadata(path: Path, title: str, author: str) -> None:
 
 
 def _write_pdf_metadata(path: Path, title: str, author: str) -> None:
-    doc = fitz.open(str(path))
-    info = doc.metadata or {}
+    reader = PdfReader(path)
+    if reader.is_encrypted:
+        raise ValueError("Encrypted PDFs keep their own metadata.")
+    writer = PdfWriter(clone_from=reader)
+    changes = {}
     if title:
-        info["title"] = title
+        changes["/Title"] = title
     if author:
-        info["author"] = author
-    doc.set_metadata(info)
-    doc.save(str(path), incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
-    doc.close()
+        changes["/Author"] = author
+    writer.add_metadata(changes)
+    staging = path.with_name(f"{path.name}.partial")
+    with staging.open("wb") as output:
+        writer.write(output)
+    staging.replace(path)
 
 
 def apply_metadata(path: Path, file_type: str, title: str, author: str) -> None:

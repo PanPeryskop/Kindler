@@ -3,8 +3,8 @@ import base64
 import httpx
 import pytest
 
-from app.services import lookup as lookup_service
-from app.services.lookup import lookup
+from kindler import lookup as lookup_service
+from kindler.lookup import lookup
 
 JPEG = b"\xff\xd8\xff\xe0fake-jpeg"
 
@@ -47,6 +47,8 @@ async def test_open_library_match_with_cover():
 
     found = await lookup("dune", "herbert", client)
 
+    assert found is not None
+
     assert (found.title, found.author) == ("Dune", "Frank Herbert")
     assert found.cover == "data:image/jpeg;base64," + base64.b64encode(JPEG).decode()
     assert "q=dune+herbert" in calls[0]
@@ -72,7 +74,10 @@ async def test_google_supplies_the_cover_open_library_lacks():
 
     found = await lookup("diuna", "", client)
 
+    assert found is not None
+
     assert (found.title, found.author) == ("Diuna", "Frank Herbert")
+    assert found.cover is not None
     assert found.cover.startswith("data:image/jpeg;base64,")
 
 
@@ -87,6 +92,8 @@ async def test_google_is_the_fallback_when_open_library_finds_nothing():
     )
 
     found = await lookup("lalka", "prus", client)
+
+    assert found is not None
 
     assert (found.title, found.author, found.cover) == ("Lalka", "Bolesław Prus", None)
 
@@ -123,6 +130,8 @@ async def test_cover_from_a_foreign_host_is_ignored():
 
     found = await lookup("dune", "", client)
 
+    assert found is not None
+
     assert found.cover is None
     assert not any("evil.example" in url for url in calls)
 
@@ -137,7 +146,9 @@ async def test_non_image_cover_is_ignored():
         }
     )
 
-    assert (await lookup("dune", "", client)).cover is None
+    found = await lookup("dune", "", client)
+    assert found is not None
+    assert found.cover is None
 
 
 async def test_requests_off_the_allowlist_are_blocked():
@@ -149,7 +160,7 @@ async def test_requests_off_the_allowlist_are_blocked():
 
 
 def test_translated_title_is_kept_while_author_and_cover_are_filled():
-    from app.services.lookup import BookInfo, merge
+    from kindler.lookup import BookInfo, merge
 
     merged = merge("Diuna", "", BookInfo("Dune", "Frank Herbert", "data:image/jpeg;base64,A"))
 
@@ -157,25 +168,25 @@ def test_translated_title_is_kept_while_author_and_cover_are_filled():
 
 
 def test_similar_or_placeholder_titles_take_the_catalogue_spelling():
-    from app.services.lookup import BookInfo, merge
+    from kindler.lookup import BookInfo, merge
 
     found = BookInfo("Dune", "Frank Herbert")
 
-    assert merge("dune", "F. Herbert", found).title == "Dune"
-    assert merge("dune", "F. Herbert", found).author == "Frank Herbert"
-    assert merge("frank_herbert-dune", "Unknown Author", found).title == "Dune"
-    assert merge("book.epub", "", found).title == "Dune"
+    assert merge("dune", "F. Herbert", found) == BookInfo("Dune", "Frank Herbert")
+    assert merge("frank_herbert-dune", "Unknown Author", found) == found
+    assert merge("book.epub", "", found) == found
 
 
 def test_match_on_neither_title_nor_author_is_rejected():
-    from app.services.lookup import BookInfo, merge
+    from kindler.lookup import BookInfo, merge
 
     assert merge("Lalka", "Bolesław Prus", BookInfo("Dune", "Frank Herbert")) is None
 
 
 def test_polish_letters_match_their_ascii_spelling():
-    from app.services.lookup import BookInfo, merge
+    from kindler.lookup import BookInfo, merge
 
     merged = merge("Lalka", "Boleslaw Prus", BookInfo("Lalka", "Bolesław Prus"))
 
+    assert merged is not None
     assert merged.author == "Bolesław Prus"

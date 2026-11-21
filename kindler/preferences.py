@@ -3,14 +3,21 @@ from dataclasses import dataclass, fields
 
 from sqlmodel import select
 
-from app.db import Preference, session_factory
+from kindler.db import Preference, session_factory
 
 
 @dataclass
 class Preferences:
     kindle_address: str = ""
     zlib_active: str = ""
+    zlib_mirror: str = ""
     show_sender_notice: bool = True
+    send_method: str = "share"
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    theme: str = "system"
 
 
 preferences = Preferences()

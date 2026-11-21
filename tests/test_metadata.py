@@ -4,7 +4,7 @@ from pathlib import Path
 import fitz
 from ebooklib import epub
 
-from app.services.metadata import apply_metadata, probe_metadata, read_raw_metadata
+from kindler.metadata import apply_metadata, probe_metadata, read_raw_metadata
 
 
 def make_epub(path: Path, title: str, author: str) -> None:
@@ -127,8 +127,8 @@ def cover_uri(data: bytes, mime: str = "image/jpeg") -> str:
 
 
 def test_cover_is_added_to_an_epub_without_one(tmp_path: Path):
-    from app.services.covers import epub_cover
-    from app.services.metadata import apply_cover
+    from kindler.covers import epub_cover
+    from kindler.metadata import apply_cover
 
     path = tmp_path / "book.epub"
     make_epub(path, "Dune", "Frank Herbert")
@@ -141,8 +141,8 @@ def test_cover_is_added_to_an_epub_without_one(tmp_path: Path):
 
 
 def test_existing_epub_cover_is_replaced_in_place(tmp_path: Path):
-    from app.services.covers import epub_cover
-    from app.services.metadata import apply_cover
+    from kindler.covers import epub_cover
+    from kindler.metadata import apply_cover
 
     path = tmp_path / "book.epub"
     make_epub(path, "Dune", "Frank Herbert")
@@ -160,7 +160,7 @@ def test_existing_epub_cover_is_replaced_in_place(tmp_path: Path):
 
 
 def test_cover_is_left_alone_for_pdfs_and_bad_data(tmp_path: Path):
-    from app.services.metadata import apply_cover
+    from kindler.metadata import apply_cover
 
     path = tmp_path / "book.epub"
     make_epub(path, "Dune", "Frank Herbert")

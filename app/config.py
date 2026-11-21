@@ -1,14 +1,16 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from kindler.settings import settings
 
-class Settings(BaseSettings):
+
+class EnvironmentSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     email_host: str = "smtp.gmail.com"
     email_port: int = 587
     email_use_tls: bool = True
-    email_host_user: str
-    email_host_password: str
+    email_host_user: str = ""
+    email_host_password: str = ""
 
     test_email: str | None = None
     max_attachment_mb: int = 18
@@ -22,9 +24,7 @@ class Settings(BaseSettings):
     zlib_state_file: str = "zlib_state.json"
     zlib_tor_proxy: str | None = None
 
-    @property
-    def max_attachment_bytes(self) -> int:
-        return self.max_attachment_mb * 1024 * 1024
 
+settings.update(**EnvironmentSettings().model_dump())
 
-settings = Settings()
+__all__ = ["settings"]

@@ -1,10 +1,12 @@
 import asyncio
 from pathlib import Path
+from typing import cast
 
 import pytest
+from curl_cffi.requests import AsyncSession
 
-from app.preferences import preferences
-from app.services import z_lib
+from kindler import z_lib
+from kindler.preferences import preferences
 
 COOKIES = (
     "# Netscape HTTP Cookie File\n"
@@ -113,7 +115,7 @@ async def test_fetch_solves_the_check_again_when_it_returns(monkeypatch):
 
     async def open_session():
         opened.append(1)
-        return z_lib._ZSession(http=Http(), mirror="https://z-lib.sk")
+        return z_lib._ZSession(http=as_http(Http()), mirror="https://z-lib.sk")
 
     async def get_text(http, url):
         return next(pages)
@@ -125,9 +127,14 @@ async def test_fetch_solves_the_check_again_when_it_returns(monkeypatch):
     assert len(opened) == 2
 
 
+def as_http(fake: object) -> AsyncSession:
+    return cast(AsyncSession, fake)
+
+
 class FakeHttp:
     def __init__(self):
         self.closed = False
+        self.cookies: dict[str, str] = {}
 
     async def close(self):
         self.closed = True
@@ -146,7 +153,7 @@ async def test_concurrent_searches_share_one_session_opening(monkeypatch):
     async def open_session():
         opened.append(1)
         await asyncio.sleep(0.01)
-        return z_lib._ZSession(http=FakeHttp(), mirror="https://z-lib.sk")
+        return z_lib._ZSession(http=as_http(FakeHttp()), mirror="https://z-lib.sk")
 
     monkeypatch.setattr(z_lib, "_open_session", open_session)
 
@@ -161,7 +168,7 @@ async def test_cancelled_search_keeps_the_session_opening(monkeypatch):
 
     async def open_session():
         await release.wait()
-        return z_lib._ZSession(http=FakeHttp(), mirror="https://z-lib.sk")
+        return z_lib._ZSession(http=as_http(FakeHttp()), mirror="https://z-lib.sk")
 
     monkeypatch.setattr(z_lib, "_open_session", open_session)
 
@@ -190,7 +197,7 @@ async def test_fetch_retries_once_on_a_network_error(monkeypatch):
     answers = iter([z_lib.ZLibraryUnreachable("reset"), (200, "<div>ok</div>")])
 
     async def open_session():
-        sessions.append(z_lib._ZSession(http=FakeHttp(), mirror="https://z-lib.sk"))
+        sessions.append(z_lib._ZSession(http=as_http(FakeHttp()), mirror="https://z-lib.sk"))
         return sessions[-1]
 
     async def get_text(http, url):
@@ -209,7 +216,7 @@ async def test_fetch_retries_once_on_a_network_error(monkeypatch):
 
 async def test_fetch_gives_up_after_a_second_network_error(monkeypatch):
     async def open_session():
-        return z_lib._ZSession(http=FakeHttp(), mirror="https://z-lib.sk")
+        return z_lib._ZSession(http=as_http(FakeHttp()), mirror="https://z-lib.sk")
 
     async def get_text(http, url):
         raise z_lib.ZLibraryUnreachable("Cannot reach Z-Library")
@@ -253,7 +260,7 @@ async def test_keep_warm_opens_a_session_once_without_tor(monkeypatch):
     monkeypatch.setattr(z_lib.settings, "zlib_password", "secret")
 
     async def open_session():
-        return z_lib._ZSession(http=FakeHttp(), mirror="https://z-lib.sk")
+        return z_lib._ZSession(http=as_http(FakeHttp()), mirror="https://z-lib.sk")
 
     monkeypatch.setattr(z_lib, "_open_session", open_session)
 
@@ -347,7 +354,9 @@ async def test_search_pages_through_results_with_a_cursor(monkeypatch):
     fetched = fake_site(monkeypatch, {1: search_page(4, 2), 2: search_page(4, 2, start=4)})
 
     first, cursor = await z_lib.search("dune", 3)
+    assert cursor is not None
     second, cursor = await z_lib.search("dune", 3, cursor=cursor)
+    assert cursor is not None
     third, cursor = await z_lib.search("dune", 3, cursor=cursor)
 
     assert [b["ref"] for b in first] == ["code0", "code1", "code2"]
@@ -402,7 +411,7 @@ async def test_reset_drops_the_session_and_an_opening_in_progress(monkeypatch):
 
     async def open_session():
         await release.wait()
-        return z_lib._ZSession(http=stale, mirror="https://z-lib.sk")
+        return z_lib._ZSession(http=as_http(stale), mirror="https://z-lib.sk")
 
     retired = []
     monkeypatch.setattr(z_lib, "_open_session", open_session)
@@ -420,7 +429,7 @@ async def test_reset_drops_the_session_and_an_opening_in_progress(monkeypatch):
 
 @pytest.mark.usefixtures("clean_db")
 async def test_active_account_overrides_the_environment(monkeypatch):
-    from app.accounts import save_account
+    from kindler.accounts import save_account
 
     monkeypatch.setattr(z_lib.settings, "zlib_email", "env@example.com")
     monkeypatch.setattr(z_lib.settings, "zlib_password", "env-secret")
@@ -433,7 +442,7 @@ async def test_active_account_overrides_the_environment(monkeypatch):
 
 @pytest.mark.usefixtures("clean_db")
 async def test_active_account_ignores_the_cookies_file(monkeypatch, tmp_path):
-    from app.accounts import save_account
+    from kindler.accounts import save_account
 
     path = tmp_path / "cookies.txt"
     path.write_text(COOKIES)
@@ -455,7 +464,8 @@ async def test_active_account_ignores_the_cookies_file(monkeypatch, tmp_path):
 
 
 async def test_reset_retires_the_current_session_instead_of_closing_it(monkeypatch):
-    current = z_lib._ZSession(http=FakeHttp(), mirror="https://z-lib.sk")
+    http = FakeHttp()
+    current = z_lib._ZSession(http=as_http(http), mirror="https://z-lib.sk")
     retired = []
     monkeypatch.setattr(z_lib, "_session", current)
     monkeypatch.setattr(z_lib, "_retire", retired.append)
@@ -464,4 +474,41 @@ async def test_reset_retires_the_current_session_instead_of_closing_it(monkeypat
 
     assert z_lib._session is None
     assert retired == [current]
-    assert not current.http.closed
+    assert not http.closed
+
+
+async def test_open_session_uses_the_configured_challenge_solver(monkeypatch):
+    pages = iter([(513, "<title>DiamWall</title>"), (200, "<div>home</div>")])
+    solved_for = []
+
+    async def solver(mirror):
+        solved_for.append(mirror)
+        return {"__diamwall": "ok"}, "Phone/1"
+
+    async def get_text(http, url):
+        return next(pages)
+
+    made = []
+
+    def new_http(cookies, user_agent):
+        made.append((cookies, user_agent))
+        http = FakeHttp()
+        http.cookies = cookies
+        return http
+
+    monkeypatch.setattr(z_lib.settings, "zlib_tor_proxy", None)
+    monkeypatch.setattr(z_lib.settings, "zlib_mirror", "https://z-lib.sk")
+    monkeypatch.setattr(z_lib, "_get_text", get_text)
+    monkeypatch.setattr(z_lib, "_new_http", new_http)
+    monkeypatch.setattr(
+        z_lib, "_load_cookies", lambda mirror: {"remix_userid": "1", "remix_userkey": "k"}
+    )
+    monkeypatch.setattr(z_lib, "_challenge_solver", z_lib.solve_in_chromium)
+    z_lib.use_challenge_solver(solver)
+
+    session = await z_lib._open_session()
+
+    assert solved_for == ["https://z-lib.sk"]
+    assert made[-1][1] == "Phone/1"
+    assert made[-1][0]["__diamwall"] == "ok"
+    assert session.mirror == "https://z-lib.sk"

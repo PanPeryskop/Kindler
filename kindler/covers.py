@@ -2,8 +2,12 @@ import base64
 from pathlib import Path
 
 import ebooklib
-import fitz
 from ebooklib import epub
+
+try:
+    import pymupdf
+except ImportError:
+    pymupdf = None
 
 IMAGE_SIGNATURES = (
     (b"\xff\xd8\xff", "image/jpeg"),
@@ -37,9 +41,11 @@ def epub_cover(path: Path) -> str | None:
 
 
 def pdf_cover(path: Path) -> str | None:
+    if pymupdf is None:
+        return None
     try:
-        doc = fitz.open(str(path))
-        pixmap = doc.load_page(0).get_pixmap(matrix=fitz.Matrix(0.5, 0.5))
+        doc = pymupdf.open(str(path))
+        pixmap = doc.load_page(0).get_pixmap(matrix=pymupdf.Matrix(0.5, 0.5))
         data = pixmap.tobytes("png")
         doc.close()
         return data_uri(data, "image/png")

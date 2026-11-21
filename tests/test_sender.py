@@ -4,8 +4,8 @@ import fitz
 import pytest
 from aiosmtpd.controller import Controller
 
-from app.config import settings
-from app.services.sender import send_to_kindle
+from kindler.sender import send_to_kindle
+from kindler.settings import settings
 
 
 class SinkHandler:

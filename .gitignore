@@ -237,3 +237,7 @@ __marimo__/
 cookies.txt
 zlib_state.json
 launch.json
+
+# Kindler Portable
+kindler_portable/src/kindler/
+kindler_portable/build/

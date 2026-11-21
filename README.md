@@ -120,3 +120,11 @@ session in the background at startup and refreshes it every ~25 minutes, so
 only a search made right after startup waits for the onion circuit. Covers are
 hidden in this mode (your browser cannot load onion-hosted images), and
 downloads are slower than on clearnet.
+
+## Project layout
+
+- `kindler/` - shared core: catalogue search, Z-Library, metadata, covers, queue,
+  preferences and sending. It has no web framework code.
+- `app/` - the FastAPI web app built on the core, plus Calibre conversion.
+- `kindler_portable/` - the Flet phone app built on the same core. See
+  [kindler_portable/README.md](kindler_portable/README.md).

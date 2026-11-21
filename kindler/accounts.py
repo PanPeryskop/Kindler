@@ -1,12 +1,12 @@
-from sqlmodel import select
+from sqlmodel import col, select
 
-from app.db import ZLibAccount, session_factory
-from app.preferences import preferences, save_preferences
+from kindler.db import ZLibAccount, session_factory
+from kindler.preferences import preferences, save_preferences
 
 
 async def list_accounts() -> list[ZLibAccount]:
     async with session_factory() as session:
-        result = await session.exec(select(ZLibAccount).order_by(ZLibAccount.created_at))
+        result = await session.exec(select(ZLibAccount).order_by(col(ZLibAccount.created_at)))
         return list(result)
 
 
